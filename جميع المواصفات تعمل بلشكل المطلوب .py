@@ -859,3 +859,5 @@ def main():
 # ------------------------------------------------
 if __name__ == "__main__":
     main()
+    python-telegram-bot==13.15
+sqlite3 bot.py
