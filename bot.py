@@ -560,10 +560,18 @@ def button_handler(update: Update, context: CallbackContext):
             context.user_data["pubg_service_price"] = price
             query.edit_message_text("ارسل الايدي الخاص بك:")
 
-        # معالجة طلب الخدمة العامة عند اختيار الخدمة (جميع الأقسام غير شحن شدات ببجي)
+        # --------------------- التعديل الأساسي: فحص الرصيد في الخدمات العامة ---------------------
         elif data.startswith("service_"):
             service_name = data[len("service_"):]
             price = services_dict.get(service_name, 0)
+            current_balance = users_balance.get(user_id, 0.0)
+            if current_balance < price:
+                buttons = [
+                    [InlineKeyboardButton("شحن عبر اسياسيل", callback_data="charge_asiacell")],
+                    [InlineKeyboardButton("رجوع", callback_data="show_services")]
+                ]
+                query.edit_message_text("رصيدك ليس كافياً.", reply_markup=InlineKeyboardMarkup(buttons))
+                return
             context.user_data["selected_service"] = service_name
             context.user_data["service_price"] = price
             query.edit_message_text(f"لقد اخترت الخدمة: {service_name} - {price}$. الآن، يرجى إرسال الرابط الخاص بالخدمة:")
