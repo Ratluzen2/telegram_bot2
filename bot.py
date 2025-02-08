@@ -25,51 +25,40 @@ API_KEY = "0f1ac747b7f6343bf4d930bdcc939cb5"
 API_URL = "https://kd1s.com/api/v2"
 
 # قاموس تحويل الخدمات المحلية إلى معطيات API الخارجية
-# تمت إضافة خدمة "نقاط تحديات تيك توك جديدة | سكور 🎯" وخدمات "رفع سكور تيكتوك" كما هو مطلوب.
 service_api_mapping = {
-    # خدمات متابعين تيكتوك
     "متابعين تيكتوك 1k": {"service_id": 13912, "quantity_multiplier": 1000},
     "متابعين تيكتوك 2k": {"service_id": 13912, "quantity_multiplier": 2000},
     "متابعين تيكتوك 3k": {"service_id": 13912, "quantity_multiplier": 3000},
     "متابعين تيكتوك 4k": {"service_id": 13912, "quantity_multiplier": 4000},
-    # خدمات مشاهدات تيكتوك
     "مشاهدات تيكتوك 10k": {"service_id": 9543, "quantity_multiplier": 10000},
     "مشاهدات تيكتوك 20k": {"service_id": 9543, "quantity_multiplier": 20000},
     "مشاهدات تيكتوك 30k": {"service_id": 9543, "quantity_multiplier": 30000},
     "مشاهدات تيكتوك 50k": {"service_id": 9543, "quantity_multiplier": 50000},
-    # خدمات متابعين انستغرام
     "متابعين انستغرام 1k": {"service_id": 13788, "quantity_multiplier": 1000},
     "متابعين انستغرام 2k": {"service_id": 13788, "quantity_multiplier": 2000},
     "متابعين انستغرام 3k": {"service_id": 13788, "quantity_multiplier": 3000},
     "متابعين انستغرام 4k": {"service_id": 13788, "quantity_multiplier": 4000},
-    # خدمات لايكات تيكتوك
     "لايكات تيكتوك 1k": {"service_id": 13761, "quantity_multiplier": 1000},
     "لايكات تيكتوك 2k": {"service_id": 13761, "quantity_multiplier": 2000},
     "لايكات تيكتوك 3k": {"service_id": 13761, "quantity_multiplier": 3000},
     "لايكات تيكتوك 4k": {"service_id": 13761, "quantity_multiplier": 4000},
-    # خدمات لايكات انستغرام
     "لايكات انستغرام 1k": {"service_id": 7973, "quantity_multiplier": 1000},
     "لايكات انستغرام 2k": {"service_id": 7973, "quantity_multiplier": 2000},
     "لايكات انستغرام 3k": {"service_id": 7973, "quantity_multiplier": 3000},
     "لايكات انستغرام 4k": {"service_id": 7973, "quantity_multiplier": 4000},
-    # خدمات مشاهدات انستغرام
     "مشاهدات انستغرام 10k": {"service_id": 13532, "quantity_multiplier": 10000},
     "مشاهدات انستغرام 20k": {"service_id": 13532, "quantity_multiplier": 20000},
     "مشاهدات انستغرام 30k": {"service_id": 13532, "quantity_multiplier": 30000},
     "مشاهدات انستغرام 50k": {"service_id": 13532, "quantity_multiplier": 50000},
-    # خدمات مشاهدات بث تيكتوك
     "مشاهدات بث تيكتوك 1k": {"service_id": 13813, "quantity_multiplier": 1000},
     "مشاهدات بث تيكتوك 2k": {"service_id": 13813, "quantity_multiplier": 2000},
     "مشاهدات بث تيكتوك 3k": {"service_id": 13813, "quantity_multiplier": 3000},
     "مشاهدات بث تيكتوك 4k": {"service_id": 13813, "quantity_multiplier": 4000},
-    # خدمات مشاهدات بث انستغرام
     "مشاهدات بث انستغرام 1k": {"service_id": 12595, "quantity_multiplier": 1000},
     "مشاهدات بث انستغرام 2k": {"service_id": 12595, "quantity_multiplier": 2000},
     "مشاهدات بث انستغرام 3k": {"service_id": 12595, "quantity_multiplier": 3000},
     "مشاهدات بث انستغرام 4k": {"service_id": 12595, "quantity_multiplier": 4000},
-    # خدمة نقاط تحديات تيك توك الجديدة | سكور 🎯
     "نقاط تحديات تيك توك جديدة | سكور 🎯": {"service_id": 13125, "quantity_multiplier": 1000},
-    # خدمات رفع سكور تيكتوك (تُعرض ضمن قسم رفع سكور تيكتوك)
     "رفع سكور بثك1k": {"service_id": 13125, "quantity_multiplier": 1000},
     "رفع سكور بثك2k": {"service_id": 13125, "quantity_multiplier": 2000},
     "رفع سكور بثك3k": {"service_id": 13125, "quantity_multiplier": 3000},
@@ -110,9 +99,7 @@ services_dict = {
     "مشاهدات بث انستغرام 2k": 4,
     "مشاهدات بث انستغرام 3k": 6,
     "مشاهدات بث انستغرام 4k": 8,
-    # خدمات نقاط تحديات تيك توك الجديدة | سكور 🎯
     "نقاط تحديات تيك توك جديدة | سكور 🎯": 0.51,
-    # خدمات رفع سكور تيكتوك
     "رفع سكور بثك1k": 2,
     "رفع سكور بثك2k": 4,
     "رفع سكور بثك3k": 2,
@@ -166,6 +153,11 @@ for col_name, col_def in required_columns.items():
         alter_stmt = f"ALTER TABLE users ADD COLUMN {col_name} {col_def}"
         cursor.execute(alter_stmt)
         conn.commit()
+
+# ------------------------------------------------
+# القاموس الخاص بالمستخدمين المحظورين (حظر/إلغاء حظر)
+# ------------------------------------------------
+blocked_users = {}  # المفتاح: user_id، القيمة: True
 
 # ------------------------------------------------
 # دوال مساعدة للوصول لبيانات المستخدمين
@@ -234,6 +226,8 @@ def main_menu_keyboard(user_id):
 
 def admin_menu_keyboard():
     buttons = [
+        [InlineKeyboardButton("حضر المستخدم", callback_data="block_user"),
+         InlineKeyboardButton("الغاء حظر المستخدم", callback_data="unblock_user")],
         [
             InlineKeyboardButton("الكارتات المعلقة", callback_data="pending_cards"),
             InlineKeyboardButton("الطلبات المعلقة", callback_data="pending_orders")
@@ -290,6 +284,10 @@ def tiktok_score_keyboard():
 
 def start(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
+    # التحقق من الحظر (باستثناء المالك)
+    if user_id in blocked_users and user_id != ADMIN_ID:
+        update.message.reply_text("لقد تم حضرك من استخدام البوت 🤣.\nانتظر حتى يتم الغاء حظرك.")
+        return
     full_name = update.effective_user.full_name
     username = update.effective_user.username or "NoUsername"
     add_user_to_db(user_id, full_name, username)
@@ -300,21 +298,67 @@ def start(update: Update, context: CallbackContext):
     update.message.reply_text(text, reply_markup=reply_markup)
 
 # ------------------------------------------------
-# التعامل مع ضغط الأزرار
+# التعامل مع ضغط الأزرار (CallbackQueryHandler)
 # ------------------------------------------------
 
 def button_handler(update: Update, context: CallbackContext):
     query = update.callback_query
     user_id = query.from_user.id
-    data = query.data
 
-    # التعامل مع زر "شحن عبر اسياسيل" للجميع
-    if data == "charge_asiacell":
-        query.edit_message_text("أرسل رقم الكارت المكون من 16 رقم:")
-        context.user_data["waiting_for_card"] = True
+    # منع المستخدم المحظور (باستثناء المالك)
+    if user_id in blocked_users and user_id != ADMIN_ID:
+        query.answer("لقد تم حضرك من استخدام البوت 🤣.", show_alert=True)
         return
 
+    data = query.data
     query.answer()
+
+    # أوامر الحظر من لوحة تحكم المالك
+    if data == "block_user":
+        if user_id != ADMIN_ID:
+            query.edit_message_text("ليس لديك صلاحية الوصول لهذه الخاصية.")
+            return
+        query.edit_message_text("أرسل اليوزرنيم أو الآيدي للمستخدم الذي تريد حضره:")
+        context.user_data["waiting_for_block"] = True
+        return
+
+    if data == "unblock_user":
+        if user_id != ADMIN_ID:
+            query.edit_message_text("ليس لديك صلاحية الوصول لهذه الخاصية.")
+            return
+        if not blocked_users:
+            query.edit_message_text("لا يوجد مستخدمين محظورين.")
+            return
+        else:
+            text = "قائمة المستخدمين المحظورين:\n"
+            keyboard = []
+            for uid in blocked_users:
+                row = get_user_from_db(uid)
+                if row:
+                    user_display = f"{row[1]} (@{row[2]})"
+                else:
+                    user_display = f"User {uid}"
+                text += f"{user_display} (ID: {uid})\n"
+                keyboard.append([InlineKeyboardButton(f"إلغاء حظر {user_display}", callback_data=f"unblock_{uid}")])
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            query.edit_message_text(text, reply_markup=reply_markup)
+            return
+
+    if data.startswith("unblock_"):
+        if user_id != ADMIN_ID:
+            query.edit_message_text("ليس لديك صلاحية الوصول لهذه الخاصية.")
+            return
+        try:
+            target_id = int(data.split("_")[1])
+        except Exception as e:
+            query.edit_message_text("حدث خطأ في بيانات المستخدم.")
+            return
+        if target_id in blocked_users:
+            del blocked_users[target_id]
+            query.edit_message_text("تم إلغاء حظر المستخدم بنجاح.")
+        else:
+            query.edit_message_text("المستخدم غير موجود في القائمة المحظورة.")
+        return
 
     if data == "back_main":
         query.edit_message_text("القائمة الرئيسية:", reply_markup=main_menu_keyboard(user_id))
@@ -565,9 +609,12 @@ def button_handler(update: Update, context: CallbackContext):
             api_check_balance(update, context)
             return
         elif data == "api_order_status":
-            api_order_status_start(update, context)
+            query.edit_message_text("أدخل رقم الطلب للتحقق من حالته عبر API:")
+            context.user_data["waiting_for_api_order_status"] = True
             return
+
     else:
+        # أوامر المستخدمين غير المالك
         if data == "show_services":
             sections_buttons = [
                 [InlineKeyboardButton("قسم المتابعين", callback_data="show_followers")],
@@ -677,10 +724,114 @@ def button_handler(update: Update, context: CallbackContext):
 def handle_messages(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
 
-    # التحقق من رقم الكارت عند الضغط على "شحن عبر اسياسيل"
+    # التحقق من الحظر (باستثناء المالك)
+    if user_id in blocked_users and user_id != ADMIN_ID:
+        update.message.reply_text("لقد تم حضرك من استخدام البوت 🤣.\nانتظر حتى يتم الغاء حظرك.")
+        return
+
+    # -------------------- كتلة إعلان البوت --------------------
+    if context.user_data.get("waiting_for_broadcast") and user_id == ADMIN_ID:
+        context.user_data["waiting_for_broadcast"] = False
+        # نص الإعلان مع الإشعار الخاص بمالك البوت
+        announcement_prefix = "✨ إعلان من مالك البوت ✨\n\n"
+        all_users = get_all_users()
+        admin_reply = "تم إرسال الإعلان لجميع المستخدمين."
+        if update.message.photo:
+            file_id = update.message.photo[-1].file_id
+            caption = update.message.caption if update.message.caption else ""
+            new_caption = announcement_prefix + caption
+            for user in all_users:
+                try:
+                    context.bot.send_photo(chat_id=user[0], photo=file_id, caption=new_caption)
+                except Exception as e:
+                    logger.error(e)
+            update.message.reply_text(admin_reply)
+            return
+        elif update.message.video:
+            file_id = update.message.video.file_id
+            caption = update.message.caption if update.message.caption else ""
+            new_caption = announcement_prefix + caption
+            for user in all_users:
+                try:
+                    context.bot.send_video(chat_id=user[0], video=file_id, caption=new_caption)
+                except Exception as e:
+                    logger.error(e)
+            update.message.reply_text(admin_reply)
+            return
+        elif update.message.voice:
+            file_id = update.message.voice.file_id
+            caption = update.message.caption if update.message.caption else ""
+            new_caption = announcement_prefix + caption
+            for user in all_users:
+                try:
+                    context.bot.send_voice(chat_id=user[0], voice=file_id, caption=new_caption)
+                except Exception as e:
+                    logger.error(e)
+            update.message.reply_text(admin_reply)
+            return
+        elif update.message.document:
+            file_id = update.message.document.file_id
+            caption = update.message.caption if update.message.caption else ""
+            new_caption = announcement_prefix + caption
+            for user in all_users:
+                try:
+                    context.bot.send_document(chat_id=user[0], document=file_id, caption=new_caption)
+                except Exception as e:
+                    logger.error(e)
+            update.message.reply_text(admin_reply)
+            return
+        elif update.message.audio:
+            file_id = update.message.audio.file_id
+            caption = update.message.caption if update.message.caption else ""
+            new_caption = announcement_prefix + caption
+            for user in all_users:
+                try:
+                    context.bot.send_audio(chat_id=user[0], audio=file_id, caption=new_caption)
+                except Exception as e:
+                    logger.error(e)
+            update.message.reply_text(admin_reply)
+            return
+        elif update.message.text:
+            text_to_send = announcement_prefix + update.message.text
+            for user in all_users:
+                try:
+                    context.bot.send_message(chat_id=user[0], text=text_to_send)
+                except Exception as e:
+                    logger.error(e)
+            update.message.reply_text(admin_reply)
+            return
+        else:
+            update.message.reply_text("نوع الرسالة غير مدعوم.")
+            return
+    # -------------------------------------------------------
+
+    # --------- كتلة انتظار حظر مستخدم (خاص بالمالك) ---------
+    if context.user_data.get("waiting_for_block") and user_id == ADMIN_ID:
+        text = update.message.text.strip()
+        context.user_data["waiting_for_block"] = False
+        try:
+            # محاولة تحويل النص إلى رقم (آيدي المستخدم)
+            target_user_id = int(text)
+        except ValueError:
+            # إذا لم يكن رقم، البحث عن المستخدم بواسطة اليوزرنيم (مع إزالة @)
+            found = None
+            for user in get_all_users():
+                if user[2] and user[2].lower() == text.lstrip("@").lower():
+                    found = user
+                    break
+            if found:
+                target_user_id = found[0]
+            else:
+                update.message.reply_text("المستخدم غير موجود في قاعدة البيانات.")
+                return
+        blocked_users[target_user_id] = True
+        update.message.reply_text(f"تم حظر المستخدم بنجاح، آيدي المستخدم: {target_user_id}")
+        return
+    # -------------------------------------------------------
+
+    # حالة انتظار إدخال رقم الكارت عند الضغط على "شحن عبر اسياسيل"
     if context.user_data.get("waiting_for_card"):
         text = update.message.text.strip()
-        # التحقق من أن الرقم مكوّن من 14 أو 16 رقماً وأيضاً أنه يتكوّن من أرقام فقط
         if text and (len(text) == 14 or len(text) == 16) and text.isdigit():
             context.user_data["waiting_for_card"] = False
             full_name = update.effective_user.full_name
@@ -698,6 +849,7 @@ def handle_messages(update: Update, context: CallbackContext):
             update.message.reply_text("الرقم المدخل غير صحيح. تأكّد أنه مكوّن من 14 رقم أو 16 رقم.")
         return
 
+    # حالة انتظار إدخال رقم الطلب للتحقق من حالته عبر API (خاص بالمالك)
     if context.user_data.get("waiting_for_api_order_status") and user_id == ADMIN_ID:
         order_id = update.message.text.strip()
         context.user_data["waiting_for_api_order_status"] = False
@@ -710,29 +862,29 @@ def handle_messages(update: Update, context: CallbackContext):
             response = requests.post(API_URL, data=params)
             order_status = response.json()
             if "status" in order_status:
-                update.message.reply_text(f"🆔 رقم الطلب: {order_id}\nالحالة: {order_status['status']}")
+                order_num    = order_status.get("order", order_id)
+                order_date   = order_status.get("date", "غير متوفر")
+                order_link   = order_status.get("link", "غير متوفر")
+                order_cost   = order_status.get("cost", "غير متوفر")
+                order_start  = order_status.get("start_count", "غير متوفر")
+                order_remains= order_status.get("remains", "غير متوفر")
+                
+                message = (
+                    f"🆔 رقم الطلب: {order_num}\n"
+                    f"📅 التاريخ: {order_date}\n"
+                    f"🔗 الرابط: {order_link}\n"
+                    f"💰 التكلفه: {order_cost}$\n"
+                    f"🔢 عدد البداية: {order_start}\n"
+                    f"📉 المتبقى: {order_remains}"
+                )
+                update.message.reply_text(message)
             else:
                 update.message.reply_text(f"❌ لم يتم العثور على حالة الطلب: {order_status.get('error', 'خطأ غير معروف')}")
         except Exception as e:
             update.message.reply_text("❌ فشل الاتصال بالنظام الخارجي. حاول مرة أخرى لاحقاً.")
         return
 
-    if context.user_data.get("waiting_for_api_cancel_order") and user_id == ADMIN_ID:
-        orders_text = update.message.text.strip()
-        context.user_data["waiting_for_api_cancel_order"] = False
-        params = {
-            'key': API_KEY,
-            'action': 'cancel',
-            'orders': orders_text
-        }
-        try:
-            response = requests.post(API_URL, data=params)
-            cancel_response = response.json()
-            update.message.reply_text(f"نتيجة الإلغاء:\n{cancel_response}")
-        except Exception as e:
-            update.message.reply_text("❌ فشل الاتصال بالنظام الخارجي. حاول مرة أخرى لاحقاً.")
-        return
-
+    # التعامل مع طلبات الخدمات (مثال على خدمة طلب رابط الخدمة)
     if "selected_service" in context.user_data and "service_price" in context.user_data:
         text = update.message.text
         if not text:
@@ -781,8 +933,7 @@ def handle_messages(update: Update, context: CallbackContext):
         context.bot.send_message(chat_id=ADMIN_ID, text="هناك طلب شحن شدات في قسم الشدات المعلقة")
         return
 
-    # باقي الكود كما هو لمعالجة باقي الحالات (إضافة الرصيد، خصم الرصيد، التعامل مع الكروت، ...)
-
+    # حالات إضافة الرصيد وخصم الرصيد وغيرها (كما هو موجود بالكود الأصلي)
     if context.user_data.get("waiting_for_add_balance_user_id") and user_id == ADMIN_ID:
         text = update.message.text
         context.user_data["waiting_for_add_balance_user_id"] = False
@@ -906,28 +1057,21 @@ def api_order_status_start(update: Update, context: CallbackContext):
     query.answer()
     reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_menu")]])
     query.edit_message_text("أدخل رقم الطلب للتحقق من حالته عبر API:", reply_markup=reply_markup)
-    context.user_data["waiting_for_api_order_status"] = True
 
 # ------------------------------------------------
-# الدالة الرئيسية لتشغيل البوت
+# إعداد الـ Updater و Dispatcher
 # ------------------------------------------------
 
 def main():
     updater = Updater(TOKEN, use_context=True)
-    dispatcher = updater.dispatcher
+    dp = updater.dispatcher
 
-    dispatcher.add_handler(CommandHandler("start", start))
-    dispatcher.add_handler(CallbackQueryHandler(button_handler))
-    dispatcher.add_handler(MessageHandler(Filters.all & ~Filters.command, handle_messages))
-
-    dispatcher.add_handler(CommandHandler("execute_order", lambda update, context: update.message.reply_text("هذا الأمر يُستخدم داخلياً.")))
-    dispatcher.add_handler(CommandHandler("check_balance", lambda update, context: update.message.reply_text("هذا الأمر يُستخدم داخلياً.")))
-
-    dispatcher.add_handler(CallbackQueryHandler(api_check_balance, pattern="^api_check_balance$"))
-    dispatcher.add_handler(CallbackQueryHandler(api_order_status_start, pattern="^api_order_status$"))
+    dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(CallbackQueryHandler(button_handler))
+    dp.add_handler(MessageHandler(Filters.all, handle_messages))
 
     updater.start_polling()
     updater.idle()
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
