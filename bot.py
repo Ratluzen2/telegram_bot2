@@ -1014,4 +1014,8 @@ def handle_messages(update: Update, context: CallbackContext):
         text = update.message.text
         context.user_data["waiting_for_add_balance_amount"] = False
         try:
-            amou
+        try:
+    amount = float(text)
+    # باقي العمليات هنا
+except ValueError:
+    update.message.reply_text("الرجاء إدخال مبلغ شحن صالح (رقم).")
