@@ -1014,8 +1014,112 @@ def handle_messages(update: Update, context: CallbackContext):
         text = update.message.text
         context.user_data["waiting_for_add_balance_amount"] = False
         try:
+            amount_to_add = float(text)
+            target_user_id = context.user_data.pop("add_balance_target_user_id", None)
+            if target_user_id is None:
+                update.message.reply_text("حدث خطأ: لا يوجد آيدي مستخدم مخزّن.")
+                return
+            sync_balance_from_db(target_user_id)
+            current_balance = users_balance.get(target_user_id, 0.0)
+            new_balance = current_balance + amount_to_add
+            users_balance[target_user_id] = new_balance
+            sync_balance_to_db(target_user_id)
+            update.message.reply_text(f"تم إضافة {amount_to_add}$ إلى رصيد المستخدم.\nالرصيد الجديد: {new_balance}$")
+            context.bot.send_message(chat_id=target_user_id, text=f"تم إضافة {amount_to_add}$ إلى رصيدك بواسطة الإدارة.\nرصيدك الحالي: {new_balance}$")
+        except ValueError:
+            update.message.reply_text("الرجاء إدخال مبلغ صحيح (رقم).")
+        return
+
+    if context.user_data.get("waiting_for_discount_user_id") and user_id == ADMIN_ID:
+        text = update.message.text
+        context.user_data["waiting_for_discount_user_id"] = False
         try:
-    amount = float(text)
-    # باقي العمليات هنا
-except ValueError:
-    update.message.reply_text("الرجاء إدخال مبلغ شحن صالح (رقم).")
+            target_user_id = int(text)
+            row = get_user_from_db(target_user_id)
+            if not row:
+                update.message.reply_text("المستخدم غير موجود في قاعدة البيانات.")
+                return
+            context.user_data["discount_target_user_id"] = target_user_id
+            update.message.reply_text(f"تم العثور على المستخدم: {row[1]} (@{row[2]})\nأرسل الآن المبلغ المراد خصمه من رصيده:")
+            context.user_data["waiting_for_discount_amount"] = True
+        except ValueError:
+            update.message.reply_text("الرجاء إدخال رقم آيدي صحيح (عدد).")
+        return
+
+    if context.user_data.get("waiting_for_discount_amount") and user_id == ADMIN_ID:
+        text = update.message.text
+        context.user_data["waiting_for_discount_amount"] = False
+        try:
+            amount_to_discount = float(text)
+            target_user_id = context.user_data.pop("discount_target_user_id", None)
+            if target_user_id is None:
+                update.message.reply_text("حدث خطأ: لا يوجد آيدي مستخدم مسجّل.")
+                return
+            sync_balance_from_db(target_user_id)
+            current_balance = users_balance.get(target_user_id, 0.0)
+            if current_balance <= 0:
+                update.message.reply_text("لا يمكن الخصم، رصيد المستخدم = 0.")
+                return
+            if current_balance >= amount_to_discount:
+                new_balance = current_balance - amount_to_discount
+                users_balance[target_user_id] = new_balance
+                sync_balance_to_db(target_user_id)
+                update.message.reply_text(f"تم خصم {amount_to_discount}$ من رصيد المستخدم بنجاح.\nالرصيد الجديد: {new_balance}$")
+                context.bot.send_message(chat_id=target_user_id, text=f"تم خصم {amount_to_discount}$ من رصيدك بواسطة الإدارة.\nرصيدك الحالي: {new_balance}$")
+            else:
+                update.message.reply_text(f"رصيد المستخدم ({current_balance}$) لا يكفي لخصم {amount_to_discount}$.")
+        except ValueError:
+            update.message.reply_text("الرجاء إدخال مبلغ صحيح (رقم).")
+        return
+
+    if context.user_data.get("waiting_for_amount") and user_id == ADMIN_ID:
+        text = update.message.text
+        try:
+            amount = float(text)
+            context.user_data["waiting_for_amount"] = False
+            card_info = context.user_data.pop("card_to_approve")
+            card_index = context.user_data.pop("card_to_approve_index")
+            pending_cards.pop(card_index)
+            users_balance[card_info["user_id"]] = users_balance.get(card_info["user_id"], 0.0) + amount
+            sync_balance_to_db(card_info["user_id"])
+            update.message.reply_text(f"تم شحن رصيد المستخدم بمبلغ {amount}$ وإشعاره بذلك.")
+            context.bot.send_message(chat_id=card_info["user_id"], text=f"تم شحن رصيدك بقيمة {amount}$. شكراً لاستخدامك خدمتنا.")
+        except ValueError:
+            update.message.reply_text("الرجاء إدخال مبلغ شحن صالح (رقم).")
+        return
+
+# ------------------------------------------------
+# دالة API check balance
+# ------------------------------------------------
+def api_check_balance(update: Update, context: CallbackContext):
+    query = update.callback_query
+    query.answer()
+    params = {
+        'key': API_KEY,
+        'action': 'balance'
+    }
+    try:
+        response = requests.post(API_URL, data=params)
+        balance_data = response.json()
+        if "balance" in balance_data:
+            reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_menu")]])
+            query.edit_message_text(f"💰 رصيد حساب API: {balance_data['balance']}$", reply_markup=reply_markup)
+        else:
+            reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_menu")]])
+            query.edit_message_text(f"❌ فشل جلب الرصيد: {balance_data.get('error', 'خطأ غير معروف')}", reply_markup=reply_markup)
+    except Exception as e:
+        query.edit_message_text("❌ فشل الاتصال بـ API.")
+
+# ------------------------------------------------
+# تسجيل المعالجات وتشغيل البوت
+# ------------------------------------------------
+if __name__ == '__main__':
+    updater = Updater(TOKEN, use_context=True)
+    dp = updater.dispatcher
+
+    dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(CallbackQueryHandler(button_handler))
+    dp.add_handler(MessageHandler(Filters.all, handle_messages))
+
+    updater.start_polling()
+    updater.idle()
