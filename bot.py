@@ -20,7 +20,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 ADMIN_ID = 7655504656         # عدل الآيدي حسب المالك
-TOKEN = "7780980861:AAElsbIgD8MmS4HnP-iNmDCfnVXXHgto260"  # ضع توكن البوت الخاص بك هنا
+TOKEN = "8138615524:AAEZGgBRMSzLxxC7F6NquT4dbmk5vA-2w4M"  # ضع توكن البوت الخاص بك هنا
 API_KEY = "cc44589ee833e48fc023984723bc78fe"  # ضع API KEY الخاص بك هنا
 API_URL = "https://kd1s.com/api/v2"  # تأكد من صحة رابط API
 
