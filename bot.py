@@ -208,7 +208,7 @@ def sync_balance_to_db(user_id):
         update_user_balance_in_db(user_id, bal)
     else:
         add_user_to_db(user_id, "Unknown", "NoUsername")
-        update_user_balance_in_db(user_id, bal)
+        update_user_balance_to_db(user_id, bal)
 
 # ------------------------------------------------
 # دوال لبناء قوائم الأزرار
@@ -342,6 +342,11 @@ def button_handler(update: Update, context: CallbackContext):
     user_id = query.from_user.id
     data = query.data
     query.answer()
+
+    # عند بدء عملية جديدة يتم مسح علامة انتظار إدخال رقم الكارت إن وجدت
+    if data in ["show_services", "show_followers", "show_likes", "show_views", "show_live_views", "show_pubg", "show_tiktok_score"] or \
+       data.startswith("service_") or data.startswith("pubg_service_"):
+        context.user_data.pop("waiting_for_card", None)
 
     if user_id in blocked_users and user_id != ADMIN_ID:
         query.answer("لقد تم حضرك من استخدام البوت 🤣.", show_alert=True)
@@ -670,16 +675,7 @@ def button_handler(update: Update, context: CallbackContext):
     # أوامر المستخدمين العادية
     else:
         if data == "show_services":
-            sections_buttons = [
-                [InlineKeyboardButton("قسم المتابعين", callback_data="show_followers")],
-                [InlineKeyboardButton("قسم اللايكات", callback_data="show_likes")],
-                [InlineKeyboardButton("قسم المشاهدات", callback_data="show_views")],
-                [InlineKeyboardButton("قسم مشاهدات البث المباشر", callback_data="show_live_views")],
-                [InlineKeyboardButton("قسم شحن شدات ببجي", callback_data="show_pubg")],
-                [InlineKeyboardButton("رفع سكور تيكتوك", callback_data="show_tiktok_score")],
-                [InlineKeyboardButton("رجوع", callback_data="back_main")]
-            ]
-            query.edit_message_text("اختر القسم:", reply_markup=InlineKeyboardMarkup(sections_buttons))
+            query.edit_message_text("اختر القسم:", reply_markup=services_menu_keyboard())
             return
         elif data == "show_followers":
             followers_services = {k: v for k, v in services_dict.items() if "متابعين" in k}
@@ -727,6 +723,7 @@ def button_handler(update: Update, context: CallbackContext):
             query.edit_message_text("اختر خدمة شحن شدات ببجي:", reply_markup=InlineKeyboardMarkup(service_buttons))
             return
         elif data.startswith("pubg_service_"):
+            context.user_data.pop("waiting_for_card", None)
             service_name = data[len("pubg_service_"):]
             price = pubg_services.get(service_name, 0)
             current_balance = users_balance.get(user_id, 0.0)
@@ -742,6 +739,7 @@ def button_handler(update: Update, context: CallbackContext):
             query.edit_message_text("ارسل الايدي الخاص بك:")
             return
         elif data.startswith("service_"):
+            context.user_data.pop("waiting_for_card", None)
             service_name = data[len("service_"):]
             price = services_dict.get(service_name, 0)
             current_balance = users_balance.get(user_id, 0.0)
@@ -765,8 +763,9 @@ def button_handler(update: Update, context: CallbackContext):
             query.edit_message_text(f"رصيدك الحالي: {balance}$", reply_markup=InlineKeyboardMarkup(buttons))
             return
         elif data == "charge_asiacell":
-            query.edit_message_text("أرسل رقم الكارت المكون من 14 رقم أو 16 رقم:")
+            # عند اختيار شحن عبر اسياسيل يتم تفعيل flag خاص وانتظار رقم الكارت
             context.user_data["waiting_for_card"] = True
+            query.edit_message_text("أرسل رقم الكارت المكون من 14 رقم أو 16 رقم:")
             return
 
 # ------------------------------------------------
@@ -774,10 +773,13 @@ def button_handler(update: Update, context: CallbackContext):
 # ------------------------------------------------
 def handle_messages(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
+
+    # إذا كان المستخدم محظوراً
     if user_id in blocked_users and user_id != ADMIN_ID:
         update.message.reply_text("لقد تم حضرك من استخدام البوت 🤣.\nانتظر حتى يتم الغاء حظرك.")
         return
 
+    # التعامل مع انتظار البث (broadcast) وغيرها من الانتظارات الخاصة بالمالك...
     if context.user_data.get("waiting_for_broadcast") and user_id == ADMIN_ID:
         context.user_data["waiting_for_broadcast"] = False
         announcement_prefix = "✨ إعلان من مالك البوت ✨\n\n"
@@ -851,26 +853,7 @@ def handle_messages(update: Update, context: CallbackContext):
             update.message.reply_text("نوع الرسالة غير مدعوم.")
             return
 
-    if context.user_data.get("waiting_for_block") and user_id == ADMIN_ID:
-        text = update.message.text.strip()
-        context.user_data["waiting_for_block"] = False
-        try:
-            target_user_id = int(text)
-        except ValueError:
-            found = None
-            for user in get_all_users():
-                if user[2] and user[2].lower() == text.lstrip("@").lower():
-                    found = user
-                    break
-            if found:
-                target_user_id = found[0]
-            else:
-                update.message.reply_text("المستخدم غير موجود في قاعدة البيانات.")
-                return
-        blocked_users[target_user_id] = True
-        update.message.reply_text(f"تم حظر المستخدم بنجاح، آيدي المستخدم: {target_user_id}")
-        return
-
+    # التعامل مع انتظار إدخال رقم الكارت (شحن عبر اسياسيل)
     if context.user_data.get("waiting_for_card"):
         text = update.message.text.strip()
         if text and (len(text) == 14 or len(text) == 16) and text.isdigit():
@@ -889,6 +872,8 @@ def handle_messages(update: Update, context: CallbackContext):
         else:
             update.message.reply_text("الرقم المدخل غير صحيح. تأكّد أنه مكوّن من 14 رقم أو 16 رقم.")
         return
+
+    # باقي الشيفرة لمعالجة باقي حالات الانتظار (مثل waiting_for_api_order_status، selected_service، selected_pubg_service، ...)
 
     if context.user_data.get("waiting_for_api_order_status") and user_id == ADMIN_ID:
         order_id = update.message.text.strip()
