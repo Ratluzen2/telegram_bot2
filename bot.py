@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# -- coding: utf-8 --
+# -*- coding: utf-8 -*-
 
 import logging
 import sqlite3
@@ -13,10 +13,7 @@ from telegram.ext import Updater, CommandHandler, MessageHandler, CallbackQueryH
 # الإعدادات والمتغيرات العامة
 # ------------------------------------------------
 
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 ADMIN_ID = 7655504656         # عدل الآيدي حسب المالك
@@ -129,6 +126,7 @@ completed_orders = []    # الطلبات المكتملة (يُضاف لها ا
 # ------------------------------------------------
 # إعداد قاعدة بيانات SQLite
 # ------------------------------------------------
+
 DB_FILE = "bot_database.db"
 conn = sqlite3.connect(DB_FILE, check_same_thread=False)
 cursor = conn.cursor()
@@ -159,11 +157,13 @@ for col_name, col_def in required_columns.items():
 # ------------------------------------------------
 # القاموس الخاص بالمستخدمين المحظورين
 # ------------------------------------------------
+
 blocked_users = {}
 
 # ------------------------------------------------
 # دوال مساعدة للوصول لبيانات المستخدمين
 # ------------------------------------------------
+
 def get_user_from_db(user_id):
     cursor.execute("SELECT user_id, full_name, username, balance FROM users WHERE user_id=?", (user_id,))
     return cursor.fetchone()
@@ -194,6 +194,7 @@ def get_users_with_balance_desc():
 # ------------------------------------------------
 # مزامنة الرصيد بين القاموس وقاعدة البيانات
 # ------------------------------------------------
+
 def sync_balance_from_db(user_id):
     row = get_user_from_db(user_id)
     if row:
@@ -208,11 +209,12 @@ def sync_balance_to_db(user_id):
         update_user_balance_in_db(user_id, bal)
     else:
         add_user_to_db(user_id, "Unknown", "NoUsername")
-        update_user_balance_to_db(user_id, bal)
+        update_user_balance_in_db(user_id, bal)
 
 # ------------------------------------------------
 # دوال لبناء قوائم الأزرار
 # ------------------------------------------------
+
 def main_menu_keyboard(user_id):
     if user_id == ADMIN_ID:
         buttons = [[InlineKeyboardButton("لوحة تحكم المالك", callback_data="admin_menu")]]
@@ -264,8 +266,33 @@ def tiktok_score_keyboard():
     return InlineKeyboardMarkup(buttons)
 
 # ------------------------------------------------
+# دالة لمسح كافة حالات الانتظار (flags)
+# ------------------------------------------------
+def clear_all_waiting_flags(context: CallbackContext):
+    waiting_keys = [
+        "waiting_for_card",
+        "waiting_for_block",
+        "waiting_for_add_balance_user_id",
+        "waiting_for_add_balance_amount",
+        "waiting_for_discount_user_id",
+        "waiting_for_discount_amount",
+        "waiting_for_broadcast",
+        "waiting_for_api_order_status",
+        "selected_service",
+        "service_price",
+        "selected_pubg_service",
+        "pubg_service_price",
+        "card_to_approve",
+        "card_to_approve_index",
+        "waiting_for_amount"
+    ]
+    for key in waiting_keys:
+        context.user_data.pop(key, None)
+
+# ------------------------------------------------
 # دالة /start
 # ------------------------------------------------
+
 def start(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     if user_id in blocked_users and user_id != ADMIN_ID:
@@ -283,6 +310,7 @@ def start(update: Update, context: CallbackContext):
 # ------------------------------------------------
 # دالة مساعدة لتنفيذ الطلبات (approve_order_process)
 # ------------------------------------------------
+
 def approve_order_process(order_index: int, context: CallbackContext, query):
     order_info = pending_orders.pop(order_index)
     if order_info['service'] in service_api_mapping:
@@ -337,12 +365,16 @@ def approve_order_process(order_index: int, context: CallbackContext, query):
 # ------------------------------------------------
 # دالة button_handler للتعامل مع ضغط الأزرار
 # ------------------------------------------------
+
 def button_handler(update: Update, context: CallbackContext):
     query = update.callback_query
     user_id = query.from_user.id
     data = query.data
     query.answer()
 
+    # مسح كافة حالات الانتظار عند الضغط على أي زر جديد
+    clear_all_waiting_flags(context)
+    
     # عند بدء عملية جديدة يتم مسح علامة انتظار إدخال رقم الكارت إن وجدت
     if data in ["show_services", "show_followers", "show_likes", "show_views", "show_live_views", "show_pubg", "show_tiktok_score"] or \
        data.startswith("service_") or data.startswith("pubg_service_"):
@@ -598,8 +630,6 @@ def button_handler(update: Update, context: CallbackContext):
             query.edit_message_text("أدخل رقم الطلب للتحقق من حالته عبر API:")
             context.user_data["waiting_for_api_order_status"] = True
             return
-
-        # ----- نظام عرض الطلبات المكتملة -----
         if data == "completed_orders":
             if not completed_orders:
                 btns = [[InlineKeyboardButton("رجوع", callback_data="admin_menu")]]
@@ -625,7 +655,6 @@ def button_handler(update: Update, context: CallbackContext):
                 buttons.append([InlineKeyboardButton("رجوع", callback_data="admin_menu")])
                 query.edit_message_text(text_msg, reply_markup=InlineKeyboardMarkup(buttons))
             return
-
         if data.startswith("refund_order_"):
             try:
                 order_index = int(data.split("_")[-1])
@@ -650,7 +679,6 @@ def button_handler(update: Update, context: CallbackContext):
             )
             query.answer("تم ارجاع الرصيد.")
 
-            # تحديث عرض الطلبات المكتملة بعد عملية الاسترجاع
             text_msg = "الطلبات المكتملة:\n\n"
             buttons = []
             for idx, order in enumerate(completed_orders):
@@ -671,7 +699,6 @@ def button_handler(update: Update, context: CallbackContext):
             buttons.append([InlineKeyboardButton("رجوع", callback_data="admin_menu")])
             query.edit_message_text(text_msg, reply_markup=InlineKeyboardMarkup(buttons))
             return
-
     # أوامر المستخدمين العادية
     else:
         if data == "show_services":
@@ -763,7 +790,6 @@ def button_handler(update: Update, context: CallbackContext):
             query.edit_message_text(f"رصيدك الحالي: {balance}$", reply_markup=InlineKeyboardMarkup(buttons))
             return
         elif data == "charge_asiacell":
-            # عند اختيار شحن عبر اسياسيل يتم تفعيل flag خاص وانتظار رقم الكارت
             context.user_data["waiting_for_card"] = True
             query.edit_message_text("أرسل رقم الكارت المكون من 14 رقم أو 16 رقم:")
             return
@@ -771,15 +797,33 @@ def button_handler(update: Update, context: CallbackContext):
 # ------------------------------------------------
 # دالة handle_messages للتعامل مع الرسائل النصية
 # ------------------------------------------------
+
 def handle_messages(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
 
-    # إذا كان المستخدم محظوراً
     if user_id in blocked_users and user_id != ADMIN_ID:
         update.message.reply_text("لقد تم حضرك من استخدام البوت 🤣.\nانتظر حتى يتم الغاء حظرك.")
         return
 
-    # التعامل مع انتظار البث (broadcast) وغيرها من الانتظارات الخاصة بالمالك...
+    if context.user_data.get("waiting_for_block") and user_id == ADMIN_ID:
+        block_input = update.message.text.strip()
+        context.user_data["waiting_for_block"] = False
+        try:
+            target_id = int(block_input)
+        except ValueError:
+            found_user = None
+            for user in get_all_users():
+                if user[2] and user[2].lower() == block_input.lower():
+                    found_user = user
+                    break
+            if not found_user:
+                update.message.reply_text("المستخدم غير موجود في قاعدة البيانات.")
+                return
+            target_id = found_user[0]
+        blocked_users[target_id] = True
+        update.message.reply_text(f"تم حضر المستخدم بنجاح. (ID: {target_id})")
+        return
+
     if context.user_data.get("waiting_for_broadcast") and user_id == ADMIN_ID:
         context.user_data["waiting_for_broadcast"] = False
         announcement_prefix = "✨ إعلان من مالك البوت ✨\n\n"
@@ -853,7 +897,6 @@ def handle_messages(update: Update, context: CallbackContext):
             update.message.reply_text("نوع الرسالة غير مدعوم.")
             return
 
-    # التعامل مع انتظار إدخال رقم الكارت (شحن عبر اسياسيل)
     if context.user_data.get("waiting_for_card"):
         text = update.message.text.strip()
         if text and (len(text) == 14 or len(text) == 16) and text.isdigit():
@@ -872,8 +915,6 @@ def handle_messages(update: Update, context: CallbackContext):
         else:
             update.message.reply_text("الرقم المدخل غير صحيح. تأكّد أنه مكوّن من 14 رقم أو 16 رقم.")
         return
-
-    # باقي الشيفرة لمعالجة باقي حالات الانتظار (مثل waiting_for_api_order_status، selected_service، selected_pubg_service، ...)
 
     if context.user_data.get("waiting_for_api_order_status") and user_id == ADMIN_ID:
         order_id = update.message.text.strip()
@@ -1076,6 +1117,7 @@ def handle_messages(update: Update, context: CallbackContext):
 # ------------------------------------------------
 # دالة API check balance
 # ------------------------------------------------
+
 def api_check_balance(update: Update, context: CallbackContext):
     query = update.callback_query
     query.answer()
@@ -1098,6 +1140,7 @@ def api_check_balance(update: Update, context: CallbackContext):
 # ------------------------------------------------
 # تسجيل المعالجات وتشغيل البوت
 # ------------------------------------------------
+
 if __name__ == '__main__':
     updater = Updater(TOKEN, use_context=True)
     dp = updater.dispatcher
