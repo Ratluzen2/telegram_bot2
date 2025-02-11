@@ -17,8 +17,8 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 logger = logging.getLogger(__name__)
 
 ADMIN_ID = 7655504656         # عدل الآيدي حسب المالك
-TOKEN = "8138615524:AAEZGgBRMSzLxxC7F6NquT4dbmk5vA-2w4M"  # ضع توكن البوت الخاص بك هنا
-API_KEY = "cc44589ee833e48fc023984723bc78fe"  # ضع API KEY الخاص بك هنا
+TOKEN = "8138615524:AAEZGgBRMSzLxxC7F6NquT4dbmk5vA-2w4M"      # ضع توكن البوت الخاص بك هنا
+API_KEY = "cc44589ee833e48fc023984723bc78fe"      # ضع API KEY الخاص بك هنا
 API_URL = "https://kd1s.com/api/v2"  # تأكد من صحة رابط API
 
 # تعريف قاموس تحويل الخدمات المحلية إلى معطيات API الخارجية
@@ -233,13 +233,13 @@ def admin_menu_keyboard():
          InlineKeyboardButton("خصم الرصيد", callback_data="admin_discount")],
         [InlineKeyboardButton("عدد المستخدمين", callback_data="admin_users_count"),
          InlineKeyboardButton("رصيد المستخدمين", callback_data="admin_users_balance")],
-        [InlineKeyboardButton("الطلبات المعلقة", callback_data="pending_orders"),
+        [InlineKeyboardButton("مراجعة الطلبات", callback_data="review_orders"),
          InlineKeyboardButton("الكارتات المعلقة", callback_data="pending_cards")],
         [InlineKeyboardButton("طلبات شدات ببجي", callback_data="pending_pubg_orders"),
          InlineKeyboardButton("فحص رصيد API", callback_data="api_check_balance")],
         [InlineKeyboardButton("فحص حالة طلب API", callback_data="api_order_status"),
          InlineKeyboardButton("اعلان البوت", callback_data="admin_announce")],
-        [InlineKeyboardButton("الطلبات المكتملة", callback_data="completed_orders")],
+        #[InlineKeyboardButton("الطلبات المكتملة", callback_data="completed_orders")],  # تم حذف هذا الزر
         [InlineKeyboardButton("رجوع", callback_data="back_main")]
     ]
     return InlineKeyboardMarkup(buttons)
@@ -336,9 +336,9 @@ def approve_order_process(order_index: int, context: CallbackContext, query):
             completed_orders.append(order_info)
             context.bot.send_message(
                 chat_id=order_info['user_id'],
-                text=f"تم تنفيذ طلبك بنجاح عبر النظام الخارجي. رقم الطلب: {api_response['order']}"
+                text=f"تم استلام طلبك وسوف يتم تنفيذة قريبا\nرقم طلبك ({api_response['order']})"
             )
-            btns = [[InlineKeyboardButton("رجوع", callback_data="pending_orders")]]
+            btns = [[InlineKeyboardButton("رجوع", callback_data="review_orders")]]
             query.edit_message_text("تم تنفيذ الطلب عبر API وإشعار المستخدم.", reply_markup=InlineKeyboardMarkup(btns))
         else:
             users_balance[order_info['user_id']] += order_info['price']
@@ -347,7 +347,7 @@ def approve_order_process(order_index: int, context: CallbackContext, query):
                 chat_id=order_info['user_id'],
                 text="فشل تنفيذ الطلب عبر النظام الخارجي، تمت إعادة المبلغ لرصيدك."
             )
-            btns = [[InlineKeyboardButton("رجوع", callback_data="pending_orders")]]
+            btns = [[InlineKeyboardButton("رجوع", callback_data="review_orders")]]
             query.edit_message_text("فشل تنفيذ الطلب عبر API وتمت إعادة الرصيد للمستخدم.", reply_markup=InlineKeyboardMarkup(btns))
     else:
         order_info["order_number"] = "N/A"
@@ -359,7 +359,7 @@ def approve_order_process(order_index: int, context: CallbackContext, query):
             chat_id=order_info['user_id'],
             text="تم إكمال طلبك بنجاح (دون تنفيذ API)؛ لا يوجد تطابق للخدمة."
         )
-        btns = [[InlineKeyboardButton("رجوع", callback_data="pending_orders")]]
+        btns = [[InlineKeyboardButton("رجوع", callback_data="review_orders")]]
         query.edit_message_text("تم تأكيد الطلب وإشعار المستخدم.", reply_markup=InlineKeyboardMarkup(btns))
 
 # ------------------------------------------------
@@ -471,52 +471,87 @@ def button_handler(update: Update, context: CallbackContext):
             btns = [[InlineKeyboardButton("رجوع", callback_data="admin_menu")]]
             query.edit_message_text(text_msg, reply_markup=InlineKeyboardMarkup(btns))
             return
-        if data == "pending_orders":
-            if not pending_orders:
+        # زر مراجعة الطلبات الجديد (تم استبدال الطلبات المعلقة سابقاً)
+        if data == "review_orders":
+            # إنشاء قائمة للطلبات التي تم تنفيذها عبر API (أي التي لها order_number != "N/A")
+            filtered = []
+            text_msg = "الطلبات التي تم تنفيذها تلقائياً من API:\n\n"
+            for i, order in enumerate(completed_orders):
+                if order.get("order_number", "N/A") != "N/A":
+                    filtered.append((i, order))
+            if not filtered:
                 btns = [[InlineKeyboardButton("رجوع", callback_data="admin_menu")]]
-                query.edit_message_text("لا توجد طلبات معلّقة حالياً.", reply_markup=InlineKeyboardMarkup(btns))
-            else:
-                text_msg = "الطلبات المعلقة:\n"
-                buttons = []
-                for idx, order in enumerate(pending_orders):
-                    text_msg += f"{idx+1}) طلب من @{order['username']} - الخدمة: {order['service']}\n"
-                    buttons.append([InlineKeyboardButton(f"معالجة الطلب رقم {idx+1}", callback_data=f"process_order_{idx}")])
-                buttons.append([InlineKeyboardButton("رجوع", callback_data="admin_menu")])
-                query.edit_message_text(text_msg, reply_markup=InlineKeyboardMarkup(buttons))
+                query.edit_message_text("لا توجد طلبات تم تنفيذها عبر API.", reply_markup=InlineKeyboardMarkup(btns))
+                return
+            keyboard = []
+            # إعادة بناء نص الرسالة مع الأزرار الخاصة بكل طلب
+            text_msg = ""
+            for display_idx, (orig_idx, order) in enumerate(filtered, start=1):
+                text_msg += f"{display_idx}) الاسم: {order['full_name']}, الخدمة: {order['service']}, السعر: {order['price']}$, رقم الطلب: {order.get('order_number', 'N/A')}\n\n"
+                keyboard.append([InlineKeyboardButton("اشعار المستخدم", callback_data=f"notify_order_{orig_idx}")])
+                keyboard.append([InlineKeyboardButton("ارجاع الرصيد", callback_data=f"refund_order_{orig_idx}")])
+            keyboard.append([InlineKeyboardButton("رجوع", callback_data="admin_menu")])
+            query.edit_message_text(text_msg, reply_markup=InlineKeyboardMarkup(keyboard))
             return
-        if data.startswith("process_order_"):
-            order_index = int(data.split("_")[-1])
-            order_info = pending_orders[order_index]
-            text_msg = (
-                f"تفاصيل الطلب رقم {order_index+1}:\n"
-                f"- المعرف: {order_info['user_id']}\n"
-                f"- الاسم: {order_info['full_name']}\n"
-                f"- يوزر: @{order_info['username']}\n"
-                f"- الخدمة: {order_info['service']}\n"
-                f"- السعر: {order_info['price']}$\n"
-                f"- الرابط: {order_info['link']}\n\n"
-                "اختر الإجراء:"
+
+        if data.startswith("notify_order_"):
+            try:
+                order_index = int(data.split("_")[-1])
+            except ValueError:
+                query.answer("خطأ في بيانات الطلب", show_alert=True)
+                return
+            if order_index < 0 or order_index >= len(completed_orders):
+                query.answer("طلب غير موجود", show_alert=True)
+                return
+            order = completed_orders[order_index]
+            context.bot.send_message(chat_id=order['user_id'], text="تم تنفيذ طلبك بنجاح")
+            query.answer("تم إرسال إشعار للمستخدم", show_alert=True)
+            return
+
+        if data.startswith("refund_order_"):
+            try:
+                order_index = int(data.split("_")[-1])
+                order = completed_orders[order_index]
+            except (IndexError, ValueError):
+                query.edit_message_text("طلب غير موجود.")
+                return
+
+            if order.get("refunded", False):
+                query.answer("لقد تم ارجاع الرصيد مسبقاً.", show_alert=True)
+                return
+
+            refund_amount = order['price']
+            target_id = order['user_id']
+            users_balance[target_id] = users_balance.get(target_id, 0.0) + refund_amount
+            sync_balance_to_db(target_id)
+            order["refunded"] = True
+
+            context.bot.send_message(
+                chat_id=target_id,
+                text=f"تم استعادة رصيدك المخصوم ({refund_amount}$)"
             )
-            btns = [
-                [InlineKeyboardButton("تم إكمال الطلب بنجاح", callback_data=f"approve_order_{order_index}"),
-                 InlineKeyboardButton("تم رفض الطلب", callback_data=f"reject_order_{order_index}")],
-                [InlineKeyboardButton("رجوع", callback_data="pending_orders")]
-            ]
-            query.edit_message_text(text_msg, reply_markup=InlineKeyboardMarkup(btns))
+            query.answer("تم ارجاع الرصيد.")
+
+            # إعادة بناء عرض الطلبات المنفذة عبر API بعد ارجاع الرصيد
+            filtered = []
+            text_msg = "الطلبات التي تم تنفيذها تلقائياً من API:\n\n"
+            for i, order in enumerate(completed_orders):
+                if order.get("order_number", "N/A") != "N/A":
+                    filtered.append((i, order))
+            if not filtered:
+                btns = [[InlineKeyboardButton("رجوع", callback_data="admin_menu")]]
+                query.edit_message_text("لا توجد طلبات تم تنفيذها عبر API.", reply_markup=InlineKeyboardMarkup(btns))
+                return
+            keyboard = []
+            text_msg = ""
+            for display_idx, (orig_idx, order) in enumerate(filtered, start=1):
+                text_msg += f"{display_idx}) الاسم: {order['full_name']}, الخدمة: {order['service']}, السعر: {order['price']}$, رقم الطلب: {order.get('order_number', 'N/A')}\n\n"
+                keyboard.append([InlineKeyboardButton("اشعار المستخدم", callback_data=f"notify_order_{orig_idx}")])
+                keyboard.append([InlineKeyboardButton("ارجاع الرصيد", callback_data=f"refund_order_{orig_idx}")])
+            keyboard.append([InlineKeyboardButton("رجوع", callback_data="admin_menu")])
+            query.edit_message_text(text_msg, reply_markup=InlineKeyboardMarkup(keyboard))
             return
-        if data.startswith("approve_order_"):
-            order_index = int(data.split("_")[-1])
-            approve_order_process(order_index, context, query)
-            return
-        if data.startswith("reject_order_"):
-            order_index = int(data.split("_")[-1])
-            order_info = pending_orders.pop(order_index)
-            users_balance[order_info['user_id']] += order_info['price']
-            sync_balance_to_db(order_info['user_id'])
-            context.bot.send_message(chat_id=order_info['user_id'], text="تم رفض الطلب، وتمت إعادة الرصيد إلى حسابك.")
-            btns = [[InlineKeyboardButton("رجوع", callback_data="pending_orders")]]
-            query.edit_message_text("تم رفض الطلب وإعادة الرصيد للمستخدم.", reply_markup=InlineKeyboardMarkup(btns))
-            return
+
         if data == "pending_cards":
             if not pending_cards:
                 btns = [[InlineKeyboardButton("رجوع", callback_data="admin_menu")]]
@@ -603,6 +638,7 @@ def button_handler(update: Update, context: CallbackContext):
             btns = [
                 [InlineKeyboardButton("تم شحن الشدات", callback_data=f"approve_pubg_order_{order_index}"),
                  InlineKeyboardButton("تم الغاء شحن الشدات", callback_data=f"reject_pubg_order_{order_index}")],
+                [InlineKeyboardButton("انتظار المستخدم", callback_data=f"user_wait_pubg_order_{order_index}")],
                 [InlineKeyboardButton("رجوع", callback_data="pending_pubg_orders")]
             ]
             query.edit_message_text(text_msg, reply_markup=InlineKeyboardMarkup(btns))
@@ -623,81 +659,20 @@ def button_handler(update: Update, context: CallbackContext):
             btns = [[InlineKeyboardButton("رجوع", callback_data="pending_pubg_orders")]]
             query.edit_message_text("تم إلغاء طلب شحن شدات ببجي وإعادة المبلغ للمستخدم.", reply_markup=InlineKeyboardMarkup(btns))
             return
+        # معالجة زر "انتظار المستخدم" في طلبات شدات ببجي
+        if data.startswith("user_wait_pubg_order_"):
+            order_index = int(data.split("_")[-1])
+            order_info = pending_pubg_orders[order_index]
+            context.bot.send_message(chat_id=order_info['user_id'], text="تم استلام طلبك وسوف يتم تنفيذة قريبا")
+            btns = [[InlineKeyboardButton("رجوع", callback_data="pending_pubg_orders")]]
+            query.edit_message_text("تم إرسال إشعار الانتظار للمستخدم.", reply_markup=InlineKeyboardMarkup(btns))
+            return
         if data == "api_check_balance":
             api_check_balance(update, context)
             return
         if data == "api_order_status":
             query.edit_message_text("أدخل رقم الطلب للتحقق من حالته عبر API:")
             context.user_data["waiting_for_api_order_status"] = True
-            return
-        if data == "completed_orders":
-            if not completed_orders:
-                btns = [[InlineKeyboardButton("رجوع", callback_data="admin_menu")]]
-                query.edit_message_text("لا توجد طلبات مكتملة.", reply_markup=InlineKeyboardMarkup(btns))
-            else:
-                text_msg = "الطلبات المكتملة:\n\n"
-                buttons = []
-                for idx, order in enumerate(completed_orders):
-                    text_msg += (
-                        f"{idx+1}) الاسم: {order['full_name']}, يوزر: @{order['username']}, ID: {order['user_id']}\n"
-                        f"   الرابط: {order['link']}\n"
-                        f"   رقم الطلب: {order.get('order_number', 'N/A')}, رقم الخدمة: {order.get('service_number', 'N/A')}\n"
-                        f"   سعر الخدمة: {order['price']}$\n"
-                    )
-                    if not order.get("refunded", False):
-                        buttons.append([InlineKeyboardButton(
-                            f"ارجاع الرصيد المخصوم للطلب {idx+1}",
-                            callback_data=f"refund_order_{idx}"
-                        )])
-                    else:
-                        text_msg += "   (تم ارجاع الرصيد المخصوم)\n"
-                    text_msg += "\n"
-                buttons.append([InlineKeyboardButton("رجوع", callback_data="admin_menu")])
-                query.edit_message_text(text_msg, reply_markup=InlineKeyboardMarkup(buttons))
-            return
-        if data.startswith("refund_order_"):
-            try:
-                order_index = int(data.split("_")[-1])
-                order = completed_orders[order_index]
-            except (IndexError, ValueError):
-                query.edit_message_text("طلب غير موجود.")
-                return
-
-            if order.get("refunded", False):
-                query.answer("لقد تم ارجاع الرصيد مسبقاً.", show_alert=True)
-                return
-
-            refund_amount = order['price']
-            target_id = order['user_id']
-            users_balance[target_id] = users_balance.get(target_id, 0.0) + refund_amount
-            sync_balance_to_db(target_id)
-            order["refunded"] = True
-
-            context.bot.send_message(
-                chat_id=target_id,
-                text=f"تم استعادة رصيدك المخصوم ({refund_amount}$)"
-            )
-            query.answer("تم ارجاع الرصيد.")
-
-            text_msg = "الطلبات المكتملة:\n\n"
-            buttons = []
-            for idx, order in enumerate(completed_orders):
-                text_msg += (
-                    f"{idx+1}) الاسم: {order['full_name']}, يوزر: @{order['username']}, ID: {order['user_id']}\n"
-                    f"   الرابط: {order['link']}\n"
-                    f"   رقم الطلب: {order.get('order_number', 'N/A')}, رقم الخدمة: {order.get('service_number', 'N/A')}\n"
-                    f"   سعر الخدمة: {order['price']}$\n"
-                )
-                if not order.get("refunded", False):
-                    buttons.append([InlineKeyboardButton(
-                        f"ارجاع الرصيد المخصوم للطلب {idx+1}",
-                        callback_data=f"refund_order_{idx}"
-                    )])
-                else:
-                    text_msg += "   (تم ارجاع الرصيد المخصوم)\n"
-                text_msg += "\n"
-            buttons.append([InlineKeyboardButton("رجوع", callback_data="admin_menu")])
-            query.edit_message_text(text_msg, reply_markup=InlineKeyboardMarkup(buttons))
             return
     # أوامر المستخدمين العادية
     else:
@@ -953,6 +928,7 @@ def handle_messages(update: Update, context: CallbackContext):
             update.message.reply_text("❌ فشل الاتصال بالنظام الخارجي. حاول مرة أخرى لاحقاً.")
         return
 
+    # معالجة طلب الخدمة عند اختيار المستخدم لها (selected_service)
     if "selected_service" in context.user_data and "service_price" in context.user_data:
         text = update.message.text
         if not text:
@@ -980,7 +956,7 @@ def handle_messages(update: Update, context: CallbackContext):
             except Exception as e:
                 api_response = {"error": "فشل استدعاء API"}
             if "order" in api_response:
-                update.message.reply_text(f"تم تنفيذ طلبك بنجاح عبر النظام الخارجي. رقم الطلب: {api_response['order']}")
+                update.message.reply_text(f"تم استلام طلبك وسوف يتم تنفيذة قريبا\nرقم طلبك ({api_response['order']})")
             else:
                 users_balance[user_id] += price
                 sync_balance_to_db(user_id)
@@ -996,7 +972,9 @@ def handle_messages(update: Update, context: CallbackContext):
                 "link": text
             }
             pending_orders.append(new_order)
-            update.message.reply_text("تم تأكيد طلبك وخصم المبلغ من رصيدك.\nسيتم إبلاغك عند إتمام الطلب أو رفضه.")
+            update.message.reply_text(
+                "تم تأكيد طلبك وخصم المبلغ من رصيدك.\nتم استلام طلبك وسوف يتم تنفيذة قريبا"
+            )
             context.bot.send_message(chat_id=ADMIN_ID, text="هناك طلب رشق جديد في الطلبات المعلقة.")
             return
 
