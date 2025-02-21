@@ -1,2 +1,2 @@
 requests
-psycopg2-binary==2.9.6==13.15
+psycopg2-binary==13.15
