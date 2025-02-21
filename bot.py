@@ -2,9 +2,10 @@
 # -*- coding: utf-8 -*-
 
 import logging
-import sqlite3
+import os
+import psycopg2
 import requests
-import time  # لإضافة طابع زمني للطلبات المكتملة
+import time
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import Updater, CommandHandler, MessageHandler, CallbackQueryHandler, Filters, CallbackContext
@@ -20,7 +21,6 @@ API_KEY = "8a94d8898e614971fde46ce1ca892202"  # ضع API KEY الخاص بك ه�
 API_URL = "https://kd1s.com/api/v2"  # تأكد من صحة رابط API
 
 # تعريف القواميس الخاصة بالخدمات
-
 service_api_mapping = {
     "متابعين تيكتوك 1k": {"service_id": 13912, "quantity_multiplier": 1000},
     "متابعين تيكتوك 2k": {"service_id": 13912, "quantity_multiplier": 2000},
@@ -147,27 +147,39 @@ pending_pubg_orders = []    # طلبات شدات ببجي المعلقة
 completed_orders = []       # الطلبات المكتملة (مع إضافة الطابع الزمني)
 pending_itunes_orders = []  # طلبات شحن الايتونز المعلقة
 
-# إعداد قاعدة بيانات SQLite
-DB_FILE = "bot_database.db"
-conn = sqlite3.connect(DB_FILE, check_same_thread=False)
+###############################################################################
+# إعداد قاعدة بيانات PostgreSQL (باستخدام Neon) بدلاً من SQLite
+###############################################################################
+
+DATABASE_URL = os.environ.get("DATABASE_URL")
+if not DATABASE_URL:
+    raise Exception("DATABASE_URL environment variable is not set.")
+
+# الاتصال بقاعدة بيانات PostgreSQL
+conn = psycopg2.connect(DATABASE_URL, sslmode="require")
 cursor = conn.cursor()
 
+# إنشاء جدول المستخدمين إذا لم يكن موجوداً
 cursor.execute("""
-    CREATE TABLE IF NOT EXISTS users (
-        user_id INTEGER PRIMARY KEY
-    )
+CREATE TABLE IF NOT EXISTS users (
+    user_id BIGINT PRIMARY KEY,
+    full_name TEXT,
+    username TEXT,
+    balance REAL DEFAULT 0
+)
 """)
 conn.commit()
 
+# التحقق من الأعمدة المطلوبة وتحديث الجدول إذا احتاج الأمر
 required_columns = {
     "full_name": "TEXT",
     "username": "TEXT",
     "balance": "REAL DEFAULT 0"
 }
 
-cursor.execute("PRAGMA table_info(users)")
+cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'users';")
 existing_cols_info = cursor.fetchall()
-existing_col_names = [col[1] for col in existing_cols_info]
+existing_col_names = [col[0] for col in existing_cols_info]
 
 for col_name, col_def in required_columns.items():
     if col_name not in existing_col_names:
@@ -175,27 +187,27 @@ for col_name, col_def in required_columns.items():
         cursor.execute(alter_stmt)
         conn.commit()
 
-# قاموس المستخدمين المحظورين
-blocked_users = {}
+###############################################################################
+# دوال قاعدة البيانات والمستخدمين (مُحدّثة لتستخدم psycopg2)
+###############################################################################
 
-# الدوال المساعدة لقاعدة البيانات والمستخدمين
 def get_user_from_db(user_id):
-    cursor.execute("SELECT user_id, full_name, username, balance FROM users WHERE user_id=?", (user_id,))
+    cursor.execute("SELECT user_id, full_name, username, balance FROM users WHERE user_id=%s", (user_id,))
     return cursor.fetchone()
 
 def add_user_to_db(user_id, full_name, username):
     row = get_user_from_db(user_id)
     if not row:
-        cursor.execute("INSERT INTO users (user_id, full_name, username, balance) VALUES (?, ?, ?, ?)",
+        cursor.execute("INSERT INTO users (user_id, full_name, username, balance) VALUES (%s, %s, %s, %s)",
                        (user_id, full_name, username, 0.0))
         conn.commit()
 
 def update_user_balance_in_db(user_id, balance):
-    cursor.execute("UPDATE users SET balance=? WHERE user_id=?", (balance, user_id))
+    cursor.execute("UPDATE users SET balance=%s WHERE user_id=%s", (balance, user_id))
     conn.commit()
 
 def update_username_in_db(user_id, username):
-    cursor.execute("UPDATE users SET username=? WHERE user_id=?", (username, user_id))
+    cursor.execute("UPDATE users SET username=%s WHERE user_id=%s", (username, user_id))
     conn.commit()
 
 def get_all_users():
@@ -222,7 +234,10 @@ def sync_balance_to_db(user_id):
         add_user_to_db(user_id, "Unknown", "NoUsername")
         update_user_balance_in_db(user_id, bal)
 
-# لوحات المفاتيح (Keyboards)
+###############################################################################
+# بقية الكود الخاص بواجهات البوت (لوحات المفاتيح، الدوال المساعدة، معالجات الأوامر)
+###############################################################################
+
 def main_menu_keyboard(user_id):
     if user_id == ADMIN_ID:
         buttons = [[InlineKeyboardButton("لوحة تحكم المالك", callback_data="admin_menu")]]
@@ -235,18 +250,12 @@ def main_menu_keyboard(user_id):
 
 def admin_menu_keyboard():
     buttons = [
-        [InlineKeyboardButton("حضر المستخدم", callback_data="block_user"),
-         InlineKeyboardButton("الغاء حظر المستخدم", callback_data="unblock_user")],
-        [InlineKeyboardButton("إضافة الرصيد", callback_data="admin_add_balance"),
-         InlineKeyboardButton("خصم الرصيد", callback_data="admin_discount")],
-        [InlineKeyboardButton("عدد المستخدمين", callback_data="admin_users_count"),
-         InlineKeyboardButton("رصيد المستخدمين", callback_data="admin_users_balance")],
-        [InlineKeyboardButton("مراجعة الطلبات", callback_data="review_orders"),
-         InlineKeyboardButton("الكارتات المعلقة", callback_data="pending_cards")],
-        [InlineKeyboardButton("طلبات شدات ببجي", callback_data="pending_pubg_orders"),
-         InlineKeyboardButton("فحص رصيد API", callback_data="api_check_balance")],
-        [InlineKeyboardButton("فحص حالة طلب API", callback_data="api_order_status"),
-         InlineKeyboardButton("اعلان البوت", callback_data="admin_announce")],
+        [InlineKeyboardButton("حضر المستخدم", callback_data="block_user"), InlineKeyboardButton("الغاء حظر المستخدم", callback_data="unblock_user")],
+        [InlineKeyboardButton("إضافة الرصيد", callback_data="admin_add_balance"), InlineKeyboardButton("خصم الرصيد", callback_data="admin_discount")],
+        [InlineKeyboardButton("عدد المستخدمين", callback_data="admin_users_count"), InlineKeyboardButton("رصيد المستخدمين", callback_data="admin_users_balance")],
+        [InlineKeyboardButton("مراجعة الطلبات", callback_data="review_orders"), InlineKeyboardButton("الكارتات المعلقة", callback_data="pending_cards")],
+        [InlineKeyboardButton("طلبات شدات ببجي", callback_data="pending_pubg_orders"), InlineKeyboardButton("فحص رصيد API", callback_data="api_check_balance")],
+        [InlineKeyboardButton("فحص حالة طلب API", callback_data="api_order_status"), InlineKeyboardButton("اعلان البوت", callback_data="admin_announce")],
         [InlineKeyboardButton("طلبات شحن الايتونز", callback_data="pending_itunes_orders")],
         [InlineKeyboardButton("رجوع", callback_data="back_main")]
     ]
@@ -296,23 +305,21 @@ def clear_all_waiting_flags(context: CallbackContext):
         "waiting_for_card", "waiting_for_block", "waiting_for_add_balance_user_id",
         "waiting_for_add_balance_amount", "waiting_for_discount_user_id", "waiting_for_discount_amount",
         "waiting_for_broadcast", "waiting_for_api_order_status", "selected_service", "service_price",
-        "selected_pubg_service", "pubg_service_price", "card_to_approve", "card_to_approve_index", "waiting_for_amount",
-        "selected_itunes_service", "itunes_service_price", "waiting_for_itunes_confirm", "itunes_temp_choice",
-        "waiting_for_itunes_code", "itunes_to_complete", "itunes_to_complete_index",
+        "selected_pubg_service", "pubg_service_price", "card_to_approve", "card_to_approve_index",
+        "waiting_for_amount", "selected_itunes_service", "itunes_service_price", "waiting_for_itunes_confirm",
+        "itunes_temp_choice", "waiting_for_itunes_code", "itunes_to_complete", "itunes_to_complete_index",
         "selected_telegram_service", "telegram_service_price", "waiting_for_telegram_link"
     ]
     for key in waiting_keys:
         context.user_data.pop(key, None)
 
-# النظام الجديد للإعلان: يدعم الصور، الفيديو، التسجيل الصوتي والنص
 def broadcast_ad(update: Update, context: CallbackContext):
     announcement_prefix = "✨ إعلان من مالك البوت ✨\n\n"
     all_users = get_all_users()
     admin_reply = "تم إرسال الإعلان لجميع المستخدمين."
-    
-    # تسجيل نوع الوسائط للمتابعة
+
     logger.info("Broadcast ad: message type - %s", update.message.effective_attachment)
-    
+
     if update.message.photo:
         file_id = update.message.photo[-1].file_id
         caption = update.message.caption if update.message.caption else ""
@@ -353,7 +360,6 @@ def broadcast_ad(update: Update, context: CallbackContext):
     else:
         update.message.reply_text("نوع الرسالة غير مدعوم.")
 
-# دالة البداية (start)
 def start(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     if user_id in blocked_users and user_id != ADMIN_ID:
@@ -371,10 +377,7 @@ def start(update: Update, context: CallbackContext):
 
 def api_check_balance(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
-    params = {
-        'key': API_KEY,
-        'action': 'balance'
-    }
+    params = {'key': API_KEY, 'action': 'balance'}
     try:
         response = requests.post(API_URL, data=params)
         balance_info = response.json()
@@ -563,7 +566,6 @@ def button_handler(update: Update, context: CallbackContext):
             context.user_data["waiting_for_discount_user_id"] = True
             return
 
-        # النظام الجديد للإعلان: عند الضغط على "اعلان البوت" يتم تفعيل وضع البث
         if data == "admin_announce":
             query.edit_message_text("أرسل الآن الرسالة أو الوسائط (صورة/فيديو/تسجيل صوتي/نص) لإعلان البوت لجميع المستخدمين:")
             context.user_data["waiting_for_broadcast"] = True
@@ -995,7 +997,6 @@ def button_handler(update: Update, context: CallbackContext):
             query.edit_message_text("أرسل رقم الكارت المكون من 14 رقم أو 16 رقم:")
             return
 
-# دالة استقبال الرسائل ومعالجتها
 def handle_messages(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     text = update.message.text
@@ -1134,7 +1135,6 @@ def handle_messages(update: Update, context: CallbackContext):
         update.message.reply_text(f"تم حضر المستخدم بنجاح. (ID: {target_id})")
         return
 
-    # استقبال إعلان المالك باستخدام النظام الجديد
     if context.user_data.get("waiting_for_broadcast") and user_id == ADMIN_ID:
         context.user_data["waiting_for_broadcast"] = False
         broadcast_ad(update, context)
@@ -1192,7 +1192,6 @@ def handle_messages(update: Update, context: CallbackContext):
             update.message.reply_text("❌ فشل الاتصال بالنظام الخارجي. حاول مرة أخرى لاحقاً.")
         return
 
-    # عند اختيار خدمة من باقي الأقسام
     if "selected_service" in context.user_data and "service_price" in context.user_data:
         link_text = text.strip()
         if not link_text:
