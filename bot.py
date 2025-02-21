@@ -32,12 +32,6 @@ logger = logging.getLogger(__name__)
 
 ###############################################################################
 # متغيرات البيئة (Environment Variables)
-# يجب ضبط هذه القيم في الهيروكو (أو أي منصة أخرى):
-# - ADMIN_ID
-# - TOKEN
-# - API_KEY
-# - API_URL
-# - NEON_DATABASE_URL
 ###############################################################################
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
 TOKEN = os.environ.get("TOKEN")
@@ -206,18 +200,18 @@ blocked_users = {}          # قاموس المستخدمين المحظورين
 # إعداد اتصال قاعدة بيانات (Neon) باستخدام psycopg2
 ###############################################################################
 conn = psycopg2.connect(NEON_DATABASE_URL, sslmode="require")
-cursor = conn.cursor()
 
 # إنشاء جدول المستخدمين إن لم يكن موجوداً
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS users (
-    user_id BIGINT PRIMARY KEY,
-    full_name TEXT,
-    username TEXT,
-    balance REAL DEFAULT 0
-)
-""")
-conn.commit()
+with conn.cursor() as cursor:
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        user_id BIGINT PRIMARY KEY,
+        full_name TEXT,
+        username TEXT,
+        balance REAL DEFAULT 0
+    )
+    """)
+    conn.commit()
 
 # التأكد من توفر الأعمدة اللازمة
 required_columns = {
@@ -225,57 +219,74 @@ required_columns = {
     "username": "TEXT",
     "balance": "REAL DEFAULT 0"
 }
-cursor.execute(
-    "SELECT column_name FROM information_schema.columns WHERE table_name = 'users';"
-)
-existing_cols_info = cursor.fetchall()
-existing_col_names = [col[0] for col in existing_cols_info]
+with conn.cursor() as cursor:
+    cursor.execute(
+        "SELECT column_name FROM information_schema.columns WHERE table_name = 'users';"
+    )
+    existing_cols_info = cursor.fetchall()
+    existing_col_names = [col[0] for col in existing_cols_info]
 
-for col_name, col_def in required_columns.items():
-    if col_name not in existing_col_names:
-        alter_stmt = f"ALTER TABLE users ADD COLUMN {col_name} {col_def}"
-        cursor.execute(alter_stmt)
-        conn.commit()
+    for col_name, col_def in required_columns.items():
+        if col_name not in existing_col_names:
+            alter_stmt = f"ALTER TABLE users ADD COLUMN {col_name} {col_def}"
+            cursor.execute(alter_stmt)
+    conn.commit()
 
 ###############################################################################
-# دوال التعامل مع قاعدة البيانات
+# دوال التعامل مع قاعدة البيانات باستخدام with conn.cursor()
 ###############################################################################
 def get_user_from_db(user_id):
     """إرجاع سجل مستخدم من قاعدة البيانات."""
-    cursor.execute("SELECT user_id, full_name, username, balance FROM users WHERE user_id=%s", (user_id,))
-    return cursor.fetchone()
+    with conn.cursor() as cursor:
+        cursor.execute(
+            "SELECT user_id, full_name, username, balance FROM users WHERE user_id=%s",
+            (user_id,)
+        )
+        return cursor.fetchone()
 
 def add_user_to_db(user_id, full_name, username):
     """إضافة مستخدم جديد إلى جدول users إذا لم يكن موجوداً."""
     row = get_user_from_db(user_id)
     if not row:
-        cursor.execute(
-            "INSERT INTO users (user_id, full_name, username, balance) VALUES (%s, %s, %s, %s)",
-            (user_id, full_name, username, 0.0)
-        )
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO users (user_id, full_name, username, balance) VALUES (%s, %s, %s, %s)",
+                (user_id, full_name, username, 0.0)
+            )
         conn.commit()
 
 def update_user_balance_in_db(user_id, balance):
     """تحديث رصيد مستخدم في قاعدة البيانات."""
-    cursor.execute("UPDATE users SET balance=%s WHERE user_id=%s", (balance, user_id))
+    with conn.cursor() as cursor:
+        cursor.execute(
+            "UPDATE users SET balance=%s WHERE user_id=%s",
+            (balance, user_id)
+        )
     conn.commit()
 
 def update_username_in_db(user_id, username):
     """تحديث اسم المستخدم (اليوزرنيم) في قاعدة البيانات."""
-    cursor.execute("UPDATE users SET username=%s WHERE user_id=%s", (username, user_id))
+    with conn.cursor() as cursor:
+        cursor.execute(
+            "UPDATE users SET username=%s WHERE user_id=%s",
+            (username, user_id)
+        )
     conn.commit()
 
 def get_all_users():
     """جلب جميع المستخدمين من قاعدة البيانات."""
-    cursor.execute("SELECT user_id, full_name, username, balance FROM users")
-    return cursor.fetchall()
+    with conn.cursor() as cursor:
+        cursor.execute("SELECT user_id, full_name, username, balance FROM users")
+        return cursor.fetchall()
 
 def get_users_with_balance_desc():
     """جلب جميع المستخدمين ذوي الرصيد > 0 وترتيبهم بشكل تنازلي بحسب الرصيد."""
-    cursor.execute(
-        "SELECT user_id, full_name, username, balance FROM users WHERE balance > 0 ORDER BY balance DESC"
-    )
-    return cursor.fetchall()
+    with conn.cursor() as cursor:
+        cursor.execute(
+            "SELECT user_id, full_name, username, balance "
+            "FROM users WHERE balance > 0 ORDER BY balance DESC"
+        )
+        return cursor.fetchall()
 
 def sync_balance_from_db(user_id):
     """مزامنة الرصيد من قاعدة البيانات إلى الذاكرة."""
@@ -283,7 +294,6 @@ def sync_balance_from_db(user_id):
     if row:
         users_balance[user_id] = row[3]
     else:
-        # في حال لم يكن المستخدم موجوداً في DB، أبقه في الذاكرة بالقيمة الموجودة أو صفر
         users_balance[user_id] = users_balance.get(user_id, 0.0)
 
 def sync_balance_to_db(user_id):
@@ -302,9 +312,7 @@ def sync_balance_to_db(user_id):
 def main_menu_keyboard(user_id):
     """لوحة المفاتيح الرئيسية، تختلف للمالك عن المستخدم العادي."""
     if user_id == ADMIN_ID:
-        buttons = [
-            [InlineKeyboardButton("لوحة تحكم المالك", callback_data="admin_menu")]
-        ]
+        buttons = [[InlineKeyboardButton("لوحة تحكم المالك", callback_data="admin_menu")]]
     else:
         buttons = [
             [InlineKeyboardButton("الخدمات", callback_data="show_services")],
@@ -1692,7 +1700,6 @@ def handle_messages(update: Update, context: CallbackContext):
             context.user_data["waiting_for_broadcast"] = False
             broadcast_ad(update, context)
             return
-
 
 ###############################################################################
 # الدالة الرئيسية (main)
