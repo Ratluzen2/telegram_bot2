@@ -38,6 +38,7 @@ TOKEN = os.environ.get("TOKEN")
 API_KEY = os.environ.get("API_KEY")
 API_URL = os.environ.get("API_URL")
 NEON_DATABASE_URL = os.environ.get("NEON_DATABASE_URL")
+HEROKU_APP_NAME = os.environ.get("HEROKU_APP_NAME", "")  # اسم تطبيقك على هيروكو
 
 if not TOKEN:
     raise Exception("لم يتم تعيين متغير البيئة TOKEN.")
@@ -1047,12 +1048,10 @@ def button_handler(update: Update, context: CallbackContext):
                     text_msg += (
                         f"{idx+1}) @{order['username']} - {order['service']} بسعر {order['price']}$\n"
                     )
-                    buttons.append(
-                        [InlineKeyboardButton(
-                            f"معالجة الطلب رقم {idx+1}",
-                            callback_data=f"process_itunes_{idx}"
-                        )]
-                    )
+                    buttons.append([InlineKeyboardButton(
+                        f"معالجة الطلب رقم {idx+1}",
+                        callback_data=f"process_itunes_{idx}"
+                    )])
                 buttons.append([InlineKeyboardButton("رجوع", callback_data="admin_menu")])
                 query.edit_message_text(text_msg, reply_markup=InlineKeyboardMarkup(buttons))
             return
@@ -1702,11 +1701,15 @@ def handle_messages(update: Update, context: CallbackContext):
             return
 
 ###############################################################################
-# الدالة الرئيسية (main)
+# الدالة الرئيسية (main) مع استخدام Webhook عند تشغيله على Heroku
 ###############################################################################
 def main():
-    """تجهيز البوت وتشغيله."""
-    updater = Updater(TOKEN, use_context=True)
+    """تجهيز البوت وتشغيله بالـWebhook على هيروكو، أو Polling محلياً."""
+    from telegram.utils.request import Request
+
+    # يمكنك استعمال Request لضبط timeout/connection_timeout إذا احتجت
+    request = Request(connect_timeout=20, read_timeout=20)
+    updater = Updater(TOKEN, use_context=True, request_kwargs={'request': request})
     dp = updater.dispatcher
 
     # أوامر
@@ -1719,9 +1722,30 @@ def main():
     dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_messages))
     dp.add_handler(MessageHandler(Filters.photo | Filters.video | Filters.voice, handle_messages))
 
-    # بدء السحب والاستماع
-    updater.start_polling()
-    updater.idle()
+    # ----------------------------
+    # إعداد الـWebhook أو الـPolling
+    # ----------------------------
+    PORT = int(os.environ.get("PORT", "8443"))  # المنفذ الذي توفّره هيروكو
+
+    if HEROKU_APP_NAME:
+        # نعمل على هيروكو -> نفعّل الـWebhook
+        WEBHOOK_URL = f"https://{HEROKU_APP_NAME}.herokuapp.com/{TOKEN}"  # رابط Webhook
+        logger.info(f"Starting webhook mode on Heroku: {WEBHOOK_URL}")
+
+        updater.start_webhook(
+            listen="0.0.0.0",
+            port=PORT,
+            url_path=TOKEN
+        )
+        # ضبط رابط الـWebhook في تيليجرام
+        updater.bot.set_webhook(WEBHOOK_URL)
+
+        updater.idle()  # منع الخروج
+    else:
+        # لا يوجد HEROKU_APP_NAME -> نفترض التشغيل المحلي
+        logger.info("Starting polling mode (local run).")
+        updater.start_polling()
+        updater.idle()
 
 
 if __name__ == "__main__":
