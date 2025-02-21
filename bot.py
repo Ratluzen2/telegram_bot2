@@ -256,6 +256,7 @@ def admin_menu_keyboard():
         [InlineKeyboardButton("فحص حالة طلب API", callback_data="api_order_status"),
          InlineKeyboardButton("اعلان البوت", callback_data="admin_announce")],
         [InlineKeyboardButton("طلبات شحن الايتونز", callback_data="pending_itunes_orders")],
+        [InlineKeyboardButton("تعديل أسعار الخدمات", callback_data="edit_service_prices")],
         [InlineKeyboardButton("رجوع", callback_data="back_main")]
     ]
     return InlineKeyboardMarkup(buttons)
@@ -307,7 +308,8 @@ def clear_all_waiting_flags(context: CallbackContext):
         "selected_pubg_service", "pubg_service_price", "card_to_approve", "card_to_approve_index",
         "waiting_for_amount", "selected_itunes_service", "itunes_service_price", "waiting_for_itunes_confirm",
         "itunes_temp_choice", "waiting_for_itunes_code", "itunes_to_complete", "itunes_to_complete_index",
-        "selected_telegram_service", "telegram_service_price", "waiting_for_telegram_link"
+        "selected_telegram_service", "telegram_service_price", "waiting_for_telegram_link",
+        "service_to_update", "waiting_for_new_price"  # متغيرات جديدة لتعديل الأسعار
     ]
     for key in waiting_keys:
         context.user_data.pop(key, None)
@@ -508,6 +510,23 @@ def button_handler(update: Update, context: CallbackContext):
             query.edit_message_text("عذراً، أنت لست المالك.")
         return
 
+    # ميزة تعديل أسعار الخدمات - القسم الجديد
+    if data == "edit_service_prices":
+        keyboard = []
+        for service_name, price in services_dict.items():
+            btn_text = f"{service_name} - {price}$"
+            keyboard.append([InlineKeyboardButton(btn_text, callback_data=f"edit_service_price_{service_name}")])
+        keyboard.append([InlineKeyboardButton("رجوع", callback_data="admin_menu")])
+        query.edit_message_text("اختر الخدمة التي تريد تعديل سعرها:", reply_markup=InlineKeyboardMarkup(keyboard))
+        return
+
+    if data.startswith("edit_service_price_"):
+        service_name = data[len("edit_service_price_"):]
+        context.user_data["service_to_update"] = service_name
+        context.user_data["waiting_for_new_price"] = True
+        query.edit_message_text(f"أرسل السعر الجديد لـ {service_name}:")
+        return
+
     # أوامر المالك
     if user_id == ADMIN_ID:
         if data == "block_user":
@@ -670,7 +689,7 @@ def button_handler(update: Update, context: CallbackContext):
                  InlineKeyboardButton("رفض الكارت", callback_data=f"reject_card_{card_index}")],
                 [InlineKeyboardButton("رجوع", callback_data="pending_cards")]
             ]
-            query.edit_message_text(text_msg, reply_markup=InlineKeyboardMarkup(btnس), parse_mode="Markdown")
+            query.edit_message_text(text_msg, reply_markup=InlineKeyboardMarkup(btns), parse_mode="Markdown")
             return
         if data.startswith("show_card_"):
             card_index = int(data.split("_")[-1])
@@ -695,7 +714,7 @@ def button_handler(update: Update, context: CallbackContext):
             card_info = pending_cards.pop(card_index)
             context.bot.send_message(chat_id=card_info["user_id"], text="تم رفض الشحن لأن رقم الكارت غير صحيح.")
             btns = [[InlineKeyboardButton("رجوع", callback_data="pending_cards")]]
-            query.edit_message_text("تم رفض الكارت بنجاح.", reply_markup=InlineKeyboardMarkup(btnس))
+            query.edit_message_text("تم رفض الكارت بنجاح.", reply_markup=InlineKeyboardMarkup(btns))
             return
         if data == "pending_pubg_orders":
             if not pending_pubg_orders:
@@ -799,7 +818,7 @@ def button_handler(update: Update, context: CallbackContext):
             itunes_order = pending_itunes_orders[itunes_index]
             context.bot.send_message(chat_id=itunes_order['user_id'], text="سوف يتم ارسال كود الهدايا قريبا")
             btns = [[InlineKeyboardButton("رجوع", callback_data="pending_itunes_orders")]]
-            query.edit_message_text("تم إرسال إشعار الانتظار للمستخدم.", reply_markup=InlineKeyboardMarkup(btns))
+            query.edit_message_text("تم إرسال إشعار الانتظار للمستخدم.", reply_markup=InlineKeyboardMarkup(btnس))
             return
         if data.startswith("itunes_complete_"):
             itunes_index = int(data.split("_")[-1])
@@ -820,7 +839,7 @@ def button_handler(update: Update, context: CallbackContext):
                 text="تم إلغاء طلب شحن الايتونز وإعادة المبلغ لرصيدك."
             )
             btns = [[InlineKeyboardButton("رجوع", callback_data="pending_itunes_orders")]]
-            query.edit_message_text("تم إلغاء طلب شحن الايتونز وإعادة المبلغ للمستخدم.", reply_markup=InlineKeyboardMarkup(btns))
+            query.edit_message_text("تم إلغاء طلب شحن الايتونز وإعادة المبلغ للمستخدم.", reply_markup=InlineKeyboardMarkup(btnس))
             return
     # أوامر المستخدمين العادية
     else:
@@ -948,6 +967,23 @@ def button_handler(update: Update, context: CallbackContext):
 def handle_messages(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     text_msg = update.message.text
+
+    # إذا كان المالك بانتظار إدخال سعر جديد لتعديل الأسعار
+    if user_id == ADMIN_ID and context.user_data.get("waiting_for_new_price"):
+        new_price_str = text_msg.strip()
+        try:
+            new_price = float(new_price_str)
+        except ValueError:
+            update.message.reply_text("الرجاء إدخال رقم صالح للسعر.")
+            return
+        service_name = context.user_data.pop("service_to_update", None)
+        context.user_data.pop("waiting_for_new_price", None)
+        if service_name and service_name in services_dict:
+            services_dict[service_name] = new_price
+            update.message.reply_text(f"تم تحديث سعر {service_name} إلى {new_price}$.")
+        else:
+            update.message.reply_text("الخدمة غير موجودة.")
+        return
 
     if user_id in blocked_users and user_id != ADMIN_ID:
         update.message.reply_text("لقد تم حضرك من استخدام البوت 🤣.\nانتظر حتى يتم الغاء حظرك.")
