@@ -9,17 +9,17 @@ import time  # لإضافة طابع زمني للطلبات المكتملة
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import Updater, CommandHandler, MessageHandler, CallbackQueryHandler, Filters, CallbackContext
 
-# الإعدادات والمتغيرات العامة
-
+# إعدادات السجل (logging)
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# إعداد المتغيرات العامة
 ADMIN_ID = 7655504656  # عدل الآيدي حسب المالك
 TOKEN = "8138615524:AAEZGgBRMSzLxxC7F6NquT4dbmk5vA-2w4M"  # ضع توكن البوت الخاص بك هنا
 API_KEY = "8a94d8898e614971fde46ce1ca892202"  # ضع API KEY الخاص بك هنا
 API_URL = "https://kd1s.com/api/v2"  # تأكد من صحة رابط API
 
-# تعريف قاموس تحويل الخدمات المحلية إلى معطيات API الخارجية
+# تعريف القواميس الخاصة بالخدمات
 
 service_api_mapping = {
     "متابعين تيكتوك 1k": {"service_id": 13912, "quantity_multiplier": 1000},
@@ -62,7 +62,6 @@ service_api_mapping = {
     "رفع سكور بثك10k": {"service_id": 13125, "quantity_multiplier": 10000},
 }
 
-# قائمة الخدمات المحلية (للعرض فقط)
 services_dict = {
     "متابعين تيكتوك 1k": 3.50,
     "متابعين تيكتوك 2k": 7,
@@ -104,7 +103,6 @@ services_dict = {
     "رفع سكور بثك10k": 20,
 }
 
-# خدمات شحن شدات ببجي (مثال)
 pubg_services = {
     "ببجي 60 شدة": 2,
     "ببجي 120 شده": 4,
@@ -115,7 +113,6 @@ pubg_services = {
     "ببجي 1800 شدة": 40,
 }
 
-# خدمات شراء رصيد ايتونز
 itunes_services = {
     "شراء رصيد 5 ايتونز": 9,
     "شراء رصيد 10 ايتونز": 18,
@@ -129,7 +126,6 @@ itunes_services = {
     "شراء رصيد 50 ايتونز": 90,
 }
 
-# خدمات التليجرام
 telegram_services = {
     "اعضاء قنوات تلي 1k": 3,
     "اعضاء قنوات تلي 2k": 6,
@@ -148,8 +144,8 @@ users_balance = {}
 pending_orders = []         # الطلبات المعلقة (غير الـ API)
 pending_cards = []          # الكروت المعلقة
 pending_pubg_orders = []    # طلبات شدات ببجي المعلقة
-completed_orders = []       # الطلبات المكتملة (يُضاف لها الطابع الزمني عند الإتمام)
-pending_itunes_orders = []  # قائمة لطلبات شحن الايتونز المعلقة
+completed_orders = []       # الطلبات المكتملة (مع إضافة الطابع الزمني)
+pending_itunes_orders = []  # طلبات شحن الايتونز المعلقة
 
 # إعداد قاعدة بيانات SQLite
 DB_FILE = "bot_database.db"
@@ -182,7 +178,7 @@ for col_name, col_def in required_columns.items():
 # قاموس المستخدمين المحظورين
 blocked_users = {}
 
-# دوال مساعدة
+# الدوال المساعدة لقاعدة البيانات والمستخدمين
 def get_user_from_db(user_id):
     cursor.execute("SELECT user_id, full_name, username, balance FROM users WHERE user_id=?", (user_id,))
     return cursor.fetchone()
@@ -226,6 +222,7 @@ def sync_balance_to_db(user_id):
         add_user_to_db(user_id, "Unknown", "NoUsername")
         update_user_balance_in_db(user_id, bal)
 
+# لوحات المفاتيح (Keyboards)
 def main_menu_keyboard(user_id):
     if user_id == ADMIN_ID:
         buttons = [[InlineKeyboardButton("لوحة تحكم المالك", callback_data="admin_menu")]]
@@ -238,12 +235,18 @@ def main_menu_keyboard(user_id):
 
 def admin_menu_keyboard():
     buttons = [
-        [InlineKeyboardButton("حضر المستخدم", callback_data="block_user"), InlineKeyboardButton("الغاء حظر المستخدم", callback_data="unblock_user")],
-        [InlineKeyboardButton("إضافة الرصيد", callback_data="admin_add_balance"), InlineKeyboardButton("خصم الرصيد", callback_data="admin_discount")],
-        [InlineKeyboardButton("عدد المستخدمين", callback_data="admin_users_count"), InlineKeyboardButton("رصيد المستخدمين", callback_data="admin_users_balance")],
-        [InlineKeyboardButton("مراجعة الطلبات", callback_data="review_orders"), InlineKeyboardButton("الكارتات المعلقة", callback_data="pending_cards")],
-        [InlineKeyboardButton("طلبات شدات ببجي", callback_data="pending_pubg_orders"), InlineKeyboardButton("فحص رصيد API", callback_data="api_check_balance")],
-        [InlineKeyboardButton("فحص حالة طلب API", callback_data="api_order_status"), InlineKeyboardButton("اعلان البوت", callback_data="admin_announce")],
+        [InlineKeyboardButton("حضر المستخدم", callback_data="block_user"),
+         InlineKeyboardButton("الغاء حظر المستخدم", callback_data="unblock_user")],
+        [InlineKeyboardButton("إضافة الرصيد", callback_data="admin_add_balance"),
+         InlineKeyboardButton("خصم الرصيد", callback_data="admin_discount")],
+        [InlineKeyboardButton("عدد المستخدمين", callback_data="admin_users_count"),
+         InlineKeyboardButton("رصيد المستخدمين", callback_data="admin_users_balance")],
+        [InlineKeyboardButton("مراجعة الطلبات", callback_data="review_orders"),
+         InlineKeyboardButton("الكارتات المعلقة", callback_data="pending_cards")],
+        [InlineKeyboardButton("طلبات شدات ببجي", callback_data="pending_pubg_orders"),
+         InlineKeyboardButton("فحص رصيد API", callback_data="api_check_balance")],
+        [InlineKeyboardButton("فحص حالة طلب API", callback_data="api_order_status"),
+         InlineKeyboardButton("اعلان البوت", callback_data="admin_announce")],
         [InlineKeyboardButton("طلبات شحن الايتونز", callback_data="pending_itunes_orders")],
         [InlineKeyboardButton("رجوع", callback_data="back_main")]
     ]
@@ -301,6 +304,56 @@ def clear_all_waiting_flags(context: CallbackContext):
     for key in waiting_keys:
         context.user_data.pop(key, None)
 
+# النظام الجديد للإعلان: يدعم الصور، الفيديو، التسجيل الصوتي والنص
+def broadcast_ad(update: Update, context: CallbackContext):
+    announcement_prefix = "✨ إعلان من مالك البوت ✨\n\n"
+    all_users = get_all_users()
+    admin_reply = "تم إرسال الإعلان لجميع المستخدمين."
+    
+    # تسجيل نوع الوسائط للمتابعة
+    logger.info("Broadcast ad: message type - %s", update.message.effective_attachment)
+    
+    if update.message.photo:
+        file_id = update.message.photo[-1].file_id
+        caption = update.message.caption if update.message.caption else ""
+        new_caption = announcement_prefix + caption
+        for usr in all_users:
+            try:
+                context.bot.send_photo(chat_id=usr[0], photo=file_id, caption=new_caption)
+            except Exception as e:
+                logger.error("Error sending photo to %s: %s", usr[0], e)
+        update.message.reply_text(admin_reply)
+    elif update.message.video:
+        file_id = update.message.video.file_id
+        caption = update.message.caption if update.message.caption else ""
+        new_caption = announcement_prefix + caption
+        for usr in all_users:
+            try:
+                context.bot.send_video(chat_id=usr[0], video=file_id, caption=new_caption)
+            except Exception as e:
+                logger.error("Error sending video to %s: %s", usr[0], e)
+        update.message.reply_text(admin_reply)
+    elif update.message.voice:
+        file_id = update.message.voice.file_id
+        for usr in all_users:
+            try:
+                context.bot.send_message(chat_id=usr[0], text=announcement_prefix)
+                context.bot.send_voice(chat_id=usr[0], voice=file_id)
+            except Exception as e:
+                logger.error("Error sending voice to %s: %s", usr[0], e)
+        update.message.reply_text(admin_reply)
+    elif update.message.text:
+        text_to_send = announcement_prefix + update.message.text
+        for usr in all_users:
+            try:
+                context.bot.send_message(chat_id=usr[0], text=text_to_send)
+            except Exception as e:
+                logger.error("Error sending text to %s: %s", usr[0], e)
+        update.message.reply_text(admin_reply)
+    else:
+        update.message.reply_text("نوع الرسالة غير مدعوم.")
+
+# دالة البداية (start)
 def start(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     if user_id in blocked_users and user_id != ADMIN_ID:
@@ -365,7 +418,7 @@ def approve_order_process(order_index: int, context: CallbackContext, query):
             completed_orders.append(order_info)
             context.bot.send_message(
                 chat_id=order_info['user_id'],
-                text=f"تم استلام طلبك وسوف يتم تنفيذة قريباً\nرقم طلبك ({api_response['order']})"
+                text=f"تم استلام طلبك وسوف يتم تنفيذه قريباً\nرقم طلبك ({api_response['order']})"
             )
             btns = [[InlineKeyboardButton("رجوع", callback_data="review_orders")]]
             query.edit_message_text("تم تنفيذ الطلب عبر API وإشعار المستخدم.", reply_markup=InlineKeyboardMarkup(btns))
@@ -403,7 +456,7 @@ def button_handler(update: Update, context: CallbackContext):
         query.answer("لقد تم حضرك من استخدام البوت 🤣.", show_alert=True)
         return
 
-    # معالجة الضغط على أزرار الخدمات
+    # معالجة أزرار الخدمات للمستخدم
     if data.startswith("service_"):
         service_name = data[len("service_"):]
         price = services_dict.get(service_name)
@@ -419,7 +472,6 @@ def button_handler(update: Update, context: CallbackContext):
             query.edit_message_text("رصيدك ليس كافياً.", reply_markup=InlineKeyboardMarkup(buttons))
             return
 
-        # تحديد رسالة التنبيه حسب نوع الخدمة:
         if "انستغرام" in service_name:
             message_text = (
                 "الرجاء إرسال رابط الخدمة الخاص بك\n"
@@ -511,8 +563,9 @@ def button_handler(update: Update, context: CallbackContext):
             context.user_data["waiting_for_discount_user_id"] = True
             return
 
+        # النظام الجديد للإعلان: عند الضغط على "اعلان البوت" يتم تفعيل وضع البث
         if data == "admin_announce":
-            query.edit_message_text("أرسل الآن الرسالة أو الوسائط للإعلان لجميع المستخدمين:")
+            query.edit_message_text("أرسل الآن الرسالة أو الوسائط (صورة/فيديو/تسجيل صوتي/نص) لإعلان البوت لجميع المستخدمين:")
             context.user_data["waiting_for_broadcast"] = True
             return
 
@@ -647,7 +700,7 @@ def button_handler(update: Update, context: CallbackContext):
             card_index = int(data.split("_")[-1])
             card_info = pending_cards[card_index]
             query.message.reply_text(
-                text=f"رقم الكارت:\n{card_info['card_number']}\nاضغط مطولاً للنسخ.",
+                text=f"رقم الكارت:\n`{card_info['card_number']}`\n(اضغط مطولاً للنسخ)",
                 parse_mode="Markdown"
             )
             query.answer()
@@ -951,7 +1004,7 @@ def handle_messages(update: Update, context: CallbackContext):
         update.message.reply_text("لقد تم حضرك من استخدام البوت 🤣.\nانتظر حتى يتم الغاء حظرك.")
         return
 
-    # معالجة إضافة الرصيد من قبل المالك: الخطوة الأولى - استلام آيدي المستخدم
+    # معالجة إضافة الرصيد من قبل المالك
     if user_id == ADMIN_ID and context.user_data.get("waiting_for_add_balance_user_id"):
         target_input = text.strip()
         try:
@@ -972,7 +1025,6 @@ def handle_messages(update: Update, context: CallbackContext):
         update.message.reply_text("أرسل الآن المبلغ المراد إضافته إلى رصيد المستخدم:")
         return
 
-    # معالجة خصم الرصيد من قبل المالك: الخطوة الأولى - استلام آيدي المستخدم
     if user_id == ADMIN_ID and context.user_data.get("waiting_for_discount_user_id"):
         target_input = text.strip()
         try:
@@ -993,7 +1045,6 @@ def handle_messages(update: Update, context: CallbackContext):
         update.message.reply_text("أرسل الآن المبلغ المراد خصمه من رصيد المستخدم:")
         return
 
-    # معالجة إضافة الرصيد من قبل المالك: الخطوة الثانية - استلام المبلغ وإضافته
     if user_id == ADMIN_ID and context.user_data.get("waiting_for_add_balance_amount"):
         amount_input = text.strip()
         try:
@@ -1011,11 +1062,9 @@ def handle_messages(update: Update, context: CallbackContext):
         users_balance[target_id] = new_balance
         sync_balance_to_db(target_id)
         update.message.reply_text(f"تمت إضافة {amount}$ إلى رصيد المستخدم (ID: {target_id}). الرصيد الجديد: {new_balance}$.")
-        # إرسال إشعار للمستخدم
         context.bot.send_message(chat_id=target_id, text=f"تنبيه: تمت إضافة {amount}$ إلى حسابك. رصيدك الجديد: {new_balance}$.")
         return
 
-    # معالجة خصم الرصيد من قبل المالك: الخطوة الثانية - استلام المبلغ وخصمه
     if user_id == ADMIN_ID and context.user_data.get("waiting_for_discount_amount"):
         amount_input = text.strip()
         try:
@@ -1036,11 +1085,9 @@ def handle_messages(update: Update, context: CallbackContext):
         users_balance[target_id] = new_balance
         sync_balance_to_db(target_id)
         update.message.reply_text(f"تم خصم {amount}$ من رصيد المستخدم (ID: {target_id}). الرصيد الجديد: {new_balance}$.")
-        # إرسال إشعار للمستخدم
         context.bot.send_message(chat_id=target_id, text=f"تنبيه: تم خصم {amount}$ من حسابك. رصيدك الجديد: {new_balance}$.")
         return
 
-    # معالجة قبول الكارت المعلق: استلام المبلغ المُدخل للمستخدم
     if user_id == ADMIN_ID and context.user_data.get("waiting_for_amount"):
         amount_input = text.strip()
         try:
@@ -1068,8 +1115,6 @@ def handle_messages(update: Update, context: CallbackContext):
         context.bot.send_message(chat_id=target_id, text=f"تنبيه: تم شحن رصيدك بمقدار {amount}$ بنجاح.")
         return
 
-    # باقي المعالجات كما في الكود الأصلي...
-    # حضر المستخدم
     if context.user_data.get("waiting_for_block") and user_id == ADMIN_ID:
         block_input = text.strip()
         context.user_data["waiting_for_block"] = False
@@ -1089,81 +1134,12 @@ def handle_messages(update: Update, context: CallbackContext):
         update.message.reply_text(f"تم حضر المستخدم بنجاح. (ID: {target_id})")
         return
 
-    # رسالة إعلان المالك
+    # استقبال إعلان المالك باستخدام النظام الجديد
     if context.user_data.get("waiting_for_broadcast") and user_id == ADMIN_ID:
         context.user_data["waiting_for_broadcast"] = False
-        announcement_prefix = "✨ إعلان من مالك البوت ✨\n\n"
-        all_users = get_all_users()
-        admin_reply = "تم إرسال الإعلان لجميع المستخدمين."
-        if update.message.photo:
-            file_id = update.message.photo[-1].file_id
-            caption = update.message.caption if update.message.caption else ""
-            new_caption = announcement_prefix + caption
-            for usr in all_users:
-                try:
-                    context.bot.send_photo(chat_id=usr[0], photo=file_id, caption=new_caption)
-                except Exception as e:
-                    logger.error(e)
-            update.message.reply_text(admin_reply)
-            return
-        elif update.message.video:
-            file_id = update.message.video.file_id
-            caption = update.message.caption if update.message.caption else ""
-            new_caption = announcement_prefix + caption
-            for usr in all_users:
-                try:
-                    context.bot.send_video(chat_id=usr[0], video=file_id, caption=new_caption)
-                except Exception as e:
-                    logger.error(e)
-            update.message.reply_text(admin_reply)
-            return
-        elif update.message.voice:
-            file_id = update.message.voice.file_id
-            caption = update.message.caption if update.message.caption else ""
-            new_caption = announcement_prefix + caption
-            for usr in all_users:
-                try:
-                    context.bot.send_voice(chat_id=usr[0], voice=file_id, caption=new_caption)
-                except Exception as e:
-                    logger.error(e)
-            update.message.reply_text(admin_reply)
-            return
-        elif update.message.document:
-            file_id = update.message.document.file_id
-            caption = update.message.caption if update.message.caption else ""
-            new_caption = announcement_prefix + caption
-            for usr in all_users:
-                try:
-                    context.bot.send_document(chat_id=usr[0], document=file_id, caption=new_caption)
-                except Exception as e:
-                    logger.error(e)
-            update.message.reply_text(admin_reply)
-            return
-        elif update.message.audio:
-            file_id = update.message.audio.file_id
-            caption = update.message.caption if update.message.caption else ""
-            new_caption = announcement_prefix + caption
-            for usr in all_users:
-                try:
-                    context.bot.send_audio(chat_id=usr[0], audio=file_id, caption=new_caption)
-                except Exception as e:
-                    logger.error(e)
-            update.message.reply_text(admin_reply)
-            return
-        elif update.message.text:
-            text_to_send = announcement_prefix + update.message.text
-            for usr in all_users:
-                try:
-                    context.bot.send_message(chat_id=usr[0], text=text_to_send)
-                except Exception as e:
-                    logger.error(e)
-            update.message.reply_text(admin_reply)
-            return
-        else:
-            update.message.reply_text("نوع الرسالة غير مدعوم.")
-            return
+        broadcast_ad(update, context)
+        return
 
-    # استلام كارت اسياسيل
     if context.user_data.get("waiting_for_card"):
         text_input = text.strip()
         if text_input and (len(text_input) == 14 or len(text_input) == 16) and text_input.isdigit():
@@ -1216,7 +1192,7 @@ def handle_messages(update: Update, context: CallbackContext):
             update.message.reply_text("❌ فشل الاتصال بالنظام الخارجي. حاول مرة أخرى لاحقاً.")
         return
 
-    # عند اختيار خدمة رشق من باقي الأقسام (بعد الضغط على زر الخدمة)
+    # عند اختيار خدمة من باقي الأقسام
     if "selected_service" in context.user_data and "service_price" in context.user_data:
         link_text = text.strip()
         if not link_text:
@@ -1226,7 +1202,6 @@ def handle_messages(update: Update, context: CallbackContext):
         price = context.user_data.pop("service_price")
         users_balance[user_id] -= price
         sync_balance_to_db(user_id)
-        # إذا كانت الخدمة موجودة في API mapping ننفذها مباشرة
         if service_name in service_api_mapping:
             mapping = service_api_mapping[service_name]
             quantity = mapping["quantity_multiplier"]
@@ -1261,7 +1236,6 @@ def handle_messages(update: Update, context: CallbackContext):
             context.bot.send_message(chat_id=ADMIN_ID, text="هناك طلب رشق جديد في الطلبات المعلقة.")
         return
 
-    # اختيار خدمة ببجي
     if "selected_pubg_service" in context.user_data and "pubg_service_price" in context.user_data:
         pubg_id_text = text.strip()
         service_name = context.user_data.pop("selected_pubg_service")
@@ -1284,7 +1258,6 @@ def handle_messages(update: Update, context: CallbackContext):
         context.bot.send_message(chat_id=ADMIN_ID, text="هناك طلب شحن شدات في قسم الشدات المعلقة")
         return
 
-    # تأكيد خدمة ايتونز
     if context.user_data.get("waiting_for_itunes_confirm"):
         if text.strip() == "1":
             service_name = context.user_data.pop("selected_itunes_service")
@@ -1310,7 +1283,6 @@ def handle_messages(update: Update, context: CallbackContext):
             update.message.reply_text("لم يتم تأكيد الطلب. إذا أردت إعادة المحاولة اختر الخدمة مجدداً.")
         return
 
-    # اكمال طلب ايتونز من قِبل المالك
     if context.user_data.get("waiting_for_itunes_code") and user_id == ADMIN_ID:
         gift_code = text.strip()
         context.user_data["waiting_for_itunes_code"] = False
@@ -1328,7 +1300,6 @@ def handle_messages(update: Update, context: CallbackContext):
         update.message.reply_text("تم إرسال كود الهدايا للمستخدم بنجاح.")
         return
 
-    # خدمات التليجرام
     if context.user_data.get("waiting_for_telegram_link"):
         context.user_data["waiting_for_telegram_link"] = False
         service_name = context.user_data.pop("selected_telegram_service")
@@ -1378,6 +1349,7 @@ if __name__ == "__main__":
         dp.add_handler(CommandHandler("start", start))
         dp.add_handler(CallbackQueryHandler(button_handler))
         dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_messages))
+        dp.add_handler(MessageHandler(Filters.photo | Filters.video | Filters.voice, handle_messages))
 
         updater.start_polling()
         updater.idle()
