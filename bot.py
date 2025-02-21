@@ -151,7 +151,7 @@ pending_itunes_orders = []  # طلبات شحن الايتونز المعلقة
 # إعداد قاعدة بيانات PostgreSQL (باستخدام Neon) بدلاً من SQLite
 ###############################################################################
 
-DATABASE_URL = os.environ.get("DATABASE_URL")
+DATABASE_URL = os.environ.get("NEON_DATABASE_URL")
 if not DATABASE_URL:
     raise Exception("DATABASE_URL environment variable is not set.")
 
