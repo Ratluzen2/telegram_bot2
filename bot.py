@@ -1282,7 +1282,7 @@ def handle_messages(update: Update, context: CallbackContext):
 
 if __name__ == "__main__":
     def main():
-        # يتم تحديد البورت من متغير البيئة الذي توفره Heroku
+        # الحصول على رقم المنفذ من متغير البيئة الذي يوفره Heroku (يجب أن يكون 80، 88، 443 أو 8443)
         PORT = int(os.environ.get('PORT', '8443'))
         updater = Updater(TOKEN, use_context=True)
         dp = updater.dispatcher
@@ -1292,11 +1292,11 @@ if __name__ == "__main__":
         dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_messages))
         dp.add_handler(MessageHandler(Filters.photo | Filters.video | Filters.voice, handle_messages))
 
-        # بدء الـ Webhook على المنفذ الذي يحدده Heroku
+        # بدء الـ Webhook على العنوان والبوابة التي يوفرها Heroku
         updater.start_webhook(listen="0.0.0.0",
                               port=PORT,
                               url_path=TOKEN)
-        # تعيين رابط الـ Webhook على Telegram بدون تضمين رقم منفذ غير مسموح
+        # تعيين رابط الـ Webhook على Telegram دون تضمين رقم منفذ غير مسموح
         updater.bot.set_webhook(APP_URL + TOKEN)
         updater.idle()
 
