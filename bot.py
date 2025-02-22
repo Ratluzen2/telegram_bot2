@@ -19,7 +19,7 @@ ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
 TOKEN = os.environ.get("TOKEN")
 API_KEY = os.environ.get("API_KEY")
 API_URL = os.environ.get("API_URL")
-# APP_URL يجب أن يحتوي على رابط التطبيق مع الشرطة المائلة في النهاية (مثلاً: "https://your-app-name.herokuapp.com/")
+# APP_URL يجب أن يحتوي على رابط التطبيق بدون رقم منفذ (مثلاً: "https://your-app-name.herokuapp.com/")
 APP_URL = os.environ.get("APP_URL")
 
 # تعريف القواميس الخاصة بالخدمات
@@ -1292,11 +1292,11 @@ if __name__ == "__main__":
         dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_messages))
         dp.add_handler(MessageHandler(Filters.photo | Filters.video | Filters.voice, handle_messages))
 
-        # بدء الـ Webhook
+        # بدء الـ Webhook على المنفذ الذي يحدده Heroku
         updater.start_webhook(listen="0.0.0.0",
                               port=PORT,
                               url_path=TOKEN)
-        # تعيين رابط الـ Webhook على Telegram
+        # تعيين رابط الـ Webhook على Telegram بدون تضمين رقم منفذ غير مسموح
         updater.bot.set_webhook(APP_URL + TOKEN)
         updater.idle()
 
