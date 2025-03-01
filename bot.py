@@ -4,57 +4,22 @@
 import logging
 import os
 import requests
-import time
+import time  # لإضافة طابع زمني للطلبات المكتملة
+import psycopg2  # استبدلنا sqlite بـ psycopg2 للتعامل مع PostgreSQL
 
-# مكتبة psycopg2 للتعامل مع PostgreSQL
-import psycopg2
-from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    ReplyKeyboardRemove
-)
-from telegram.ext import (
-    Updater,
-    CommandHandler,
-    MessageHandler,
-    CallbackQueryHandler,
-    Filters,
-    CallbackContext
-)
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove
+from telegram.ext import Updater, CommandHandler, MessageHandler, CallbackQueryHandler, Filters, CallbackContext
 
-# ===============[ ضبط التسجيل (Logging) ]=================
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+# الإعدادات والمتغيرات العامة
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ===============[ قراءة المتغيرات من البيئة ]===============
-ADMIN_ID = int(os.getenv("ADMIN_ID", "123456789"))  # آيدي المالك
-TOKEN = os.getenv("TOKEN", "")                      # توكن البوت
-API_KEY = os.getenv("API_KEY", "")                  # مفتاح API الخارجي
-API_URL = "https://kd1s.com/api/v2"                 # رابط الـ API
+ADMIN_ID = 7655504656  # عدل الآيدي حسب المالك
+TOKEN = "8138615524:AAEZGgBRMSzLxxC7F6NquT4dbmk5vA-2w4M"  # ضع توكن البوت الخاص بك هنا
+API_KEY = "8a94d8898e614971fde46ce1ca892202"  # ضع API KEY الخاص بك هنا
+API_URL = "https://kd1s.com/api/v2"  # تأكد من صحة رابط API
 
-# بدل DATABASE_URL بـ NEON_DATABASE_URL:
-NEON_DATABASE_URL = os.getenv("NEON_DATABASE_URL", "")  # رابط اتصال PostgreSQL من Neon (أو أي خدمة)
-
-# ===============[ إنشاء الاتصال بقاعدة البيانات ]===========
-conn = psycopg2.connect(NEON_DATABASE_URL, sslmode='require')
-cursor = conn.cursor()
-
-# إنشاء جدول users إن لم يكن موجودًا
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS users (
-    user_id BIGINT PRIMARY KEY,
-    full_name TEXT,
-    username TEXT,
-    balance REAL DEFAULT 0
-);
-""")
-conn.commit()
-
-# ===============[ القواميس والدوال المساعدة ]===============
+# تعريف قاموس تحويل الخدمات المحلية إلى معطيات API الخارجية
 service_api_mapping = {
     "متابعين تيكتوك 1k": {"service_id": 13912, "quantity_multiplier": 1000},
     "متابعين تيكتوك 2k": {"service_id": 13912, "quantity_multiplier": 2000},
@@ -96,6 +61,7 @@ service_api_mapping = {
     "رفع سكور بثك10k": {"service_id": 13125, "quantity_multiplier": 10000},
 }
 
+# قائمة الخدمات المحلية (للعرض فقط)
 services_dict = {
     "متابعين تيكتوك 1k": 3.50,
     "متابعين تيكتوك 2k": 7,
@@ -137,6 +103,7 @@ services_dict = {
     "رفع سكور بثك10k": 20,
 }
 
+# خدمات شحن شدات ببجي (مثال)
 pubg_services = {
     "ببجي 60 شدة": 2,
     "ببجي 120 شده": 4,
@@ -147,6 +114,7 @@ pubg_services = {
     "ببجي 1800 شدة": 40,
 }
 
+# خدمات شراء رصيد ايتونز
 itunes_services = {
     "شراء رصيد 5 ايتونز": 9,
     "شراء رصيد 10 ايتونز": 18,
@@ -160,6 +128,7 @@ itunes_services = {
     "شراء رصيد 50 ايتونز": 90,
 }
 
+# خدمات التليجرام
 telegram_services = {
     "اعضاء قنوات تلي 1k": 3,
     "اعضاء قنوات تلي 2k": 6,
@@ -173,15 +142,60 @@ telegram_services = {
     "اعضاء كروبات تلي 5k": 15,
 }
 
+# المتغيرات الخاصة بالطلبات والرصيد
 users_balance = {}
-pending_orders = []          # الطلبات المعلقة
-pending_cards = []           # الكروت المعلقة
-pending_pubg_orders = []     # طلبات شدات ببجي المعلقة
-completed_orders = []        # الطلبات المكتملة
-pending_itunes_orders = []   # طلبات شحن الايتونز المعلقة
-blocked_users = {}           # قاموس المستخدمين المحظورين
+pending_orders = []         # الطلبات المعلقة (غير الـ API)
+pending_cards = []          # الكروت المعلقة
+pending_pubg_orders = []    # طلبات شدات ببجي المعلقة
+completed_orders = []       # الطلبات المكتملة (يُضاف لها الطابع الزمني عند الإتمام)
+pending_itunes_orders = []  # قائمة لطلبات شحن الايتونز المعلقة
 
-# ===============[ دوال التعامل مع PostgreSQL ]==============
+# إعداد الاتصال بقاعدة بيانات PostgreSQL عبر Neon (أو أي منصة PostgreSQL أخرى).
+# تغيير اسم المتغير من DATABASE_URL إلى NEON_DATABASE_URL:
+NEON_DB_URL = os.getenv("NEON_DATABASE_URL")
+
+if not NEON_DB_URL:
+    raise ValueError("لم يتم العثور على المتغير البيئي NEON_DATABASE_URL. تأكد من إضافته في الإعدادات.")
+
+conn = psycopg2.connect(NEON_DB_URL)
+conn.autocommit = True
+cursor = conn.cursor()
+
+# إنشاء جدول users إذا لم يكن موجودًا
+cursor.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        user_id BIGINT PRIMARY KEY,
+        full_name TEXT,
+        username TEXT,
+        balance REAL DEFAULT 0
+    );
+""")
+
+# فحص الأعمدة وإضافة المفقود منها
+required_columns = {
+    "full_name": "TEXT",
+    "username": "TEXT",
+    "balance": "REAL DEFAULT 0"
+}
+
+# بدلًا من PRAGMA table_info(users) في SQLite، نستخدم المعلومات من information_schema
+cursor.execute("""
+    SELECT column_name 
+    FROM information_schema.columns 
+    WHERE table_name='users'
+""")
+existing_cols_info = cursor.fetchall()
+existing_col_names = [row[0] for row in existing_cols_info]
+
+for col_name, col_def in required_columns.items():
+    if col_name not in existing_col_names:
+        alter_stmt = f"ALTER TABLE users ADD COLUMN {col_name} {col_def};"
+        cursor.execute(alter_stmt)
+
+# قاموس المستخدمين المحظورين
+blocked_users = {}
+
+# دوال مساعدة
 def get_user_from_db(user_id):
     cursor.execute("SELECT user_id, full_name, username, balance FROM users WHERE user_id=%s", (user_id,))
     return cursor.fetchone()
@@ -193,30 +207,19 @@ def add_user_to_db(user_id, full_name, username):
             "INSERT INTO users (user_id, full_name, username, balance) VALUES (%s, %s, %s, %s)",
             (user_id, full_name, username, 0.0)
         )
-        conn.commit()
 
 def update_user_balance_in_db(user_id, balance):
-    cursor.execute(
-        "UPDATE users SET balance=%s WHERE user_id=%s",
-        (balance, user_id)
-    )
-    conn.commit()
+    cursor.execute("UPDATE users SET balance=%s WHERE user_id=%s", (balance, user_id))
 
 def update_username_in_db(user_id, username):
-    cursor.execute(
-        "UPDATE users SET username=%s WHERE user_id=%s",
-        (username, user_id)
-    )
-    conn.commit()
+    cursor.execute("UPDATE users SET username=%s WHERE user_id=%s", (username, user_id))
 
 def get_all_users():
     cursor.execute("SELECT user_id, full_name, username, balance FROM users")
     return cursor.fetchall()
 
 def get_users_with_balance_desc():
-    cursor.execute(
-        "SELECT user_id, full_name, username, balance FROM users WHERE balance > 0 ORDER BY balance DESC"
-    )
+    cursor.execute("SELECT user_id, full_name, username, balance FROM users WHERE balance > 0 ORDER BY balance DESC")
     return cursor.fetchall()
 
 def sync_balance_from_db(user_id):
@@ -235,7 +238,6 @@ def sync_balance_to_db(user_id):
         add_user_to_db(user_id, "Unknown", "NoUsername")
         update_user_balance_in_db(user_id, bal)
 
-# ===============[ لوحات الأزرار (Keyboards) ]===============
 def main_menu_keyboard(user_id):
     if user_id == ADMIN_ID:
         buttons = [[InlineKeyboardButton("لوحة تحكم المالك", callback_data="admin_menu")]]
@@ -248,18 +250,12 @@ def main_menu_keyboard(user_id):
 
 def admin_menu_keyboard():
     buttons = [
-        [InlineKeyboardButton("حضر المستخدم", callback_data="block_user"),
-         InlineKeyboardButton("الغاء حظر المستخدم", callback_data="unblock_user")],
-        [InlineKeyboardButton("إضافة الرصيد", callback_data="admin_add_balance"),
-         InlineKeyboardButton("خصم الرصيد", callback_data="admin_discount")],
-        [InlineKeyboardButton("عدد المستخدمين", callback_data="admin_users_count"),
-         InlineKeyboardButton("رصيد المستخدمين", callback_data="admin_users_balance")],
-        [InlineKeyboardButton("مراجعة الطلبات", callback_data="review_orders"),
-         InlineKeyboardButton("الكارتات المعلقة", callback_data="pending_cards")],
-        [InlineKeyboardButton("طلبات شدات ببجي", callback_data="pending_pubg_orders"),
-         InlineKeyboardButton("فحص رصيد API", callback_data="api_check_balance")],
-        [InlineKeyboardButton("فحص حالة طلب API", callback_data="api_order_status"),
-         InlineKeyboardButton("اعلان البوت", callback_data="admin_announce")],
+        [InlineKeyboardButton("حضر المستخدم", callback_data="block_user"), InlineKeyboardButton("الغاء حظر المستخدم", callback_data="unblock_user")],
+        [InlineKeyboardButton("إضافة الرصيد", callback_data="admin_add_balance"), InlineKeyboardButton("خصم الرصيد", callback_data="admin_discount")],
+        [InlineKeyboardButton("عدد المستخدمين", callback_data="admin_users_count"), InlineKeyboardButton("رصيد المستخدمين", callback_data="admin_users_balance")],
+        [InlineKeyboardButton("مراجعة الطلبات", callback_data="review_orders"), InlineKeyboardButton("الكارتات المعلقة", callback_data="pending_cards")],
+        [InlineKeyboardButton("طلبات شدات ببجي", callback_data="pending_pubg_orders"), InlineKeyboardButton("فحص رصيد API", callback_data="api_check_balance")],
+        [InlineKeyboardButton("فحص حالة طلب API", callback_data="api_order_status"), InlineKeyboardButton("اعلان البوت", callback_data="admin_announce")],
         [InlineKeyboardButton("طلبات شحن الايتونز", callback_data="pending_itunes_orders")],
         [InlineKeyboardButton("رجوع", callback_data="back_main")]
     ]
@@ -317,7 +313,6 @@ def clear_all_waiting_flags(context: CallbackContext):
     for key in waiting_keys:
         context.user_data.pop(key, None)
 
-# ===============[ دوال رئيسية للبدء وفحص الرصيد ]===============
 def start(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     if user_id in blocked_users and user_id != ADMIN_ID:
@@ -329,7 +324,6 @@ def start(update: Update, context: CallbackContext):
     add_user_to_db(user_id, full_name, username)
     update_username_in_db(user_id, username)
     sync_balance_from_db(user_id)
-
     text = "مرحباً بك في البوت!"
     reply_markup = main_menu_keyboard(user_id)
     update.message.reply_text(text, reply_markup=reply_markup)
@@ -347,7 +341,7 @@ def api_check_balance(update: Update, context: CallbackContext):
             text_msg = f"رصيد حسابك في API: {balance_info['balance']}$"
         else:
             text_msg = f"حدث خطأ في جلب الرصيد من API: {balance_info.get('error', 'غير معروف')}"
-    except Exception as e:
+    except Exception:
         text_msg = "فشل الاتصال بالـ API."
 
     if update.callback_query:
@@ -357,7 +351,6 @@ def api_check_balance(update: Update, context: CallbackContext):
     else:
         update.message.reply_text(text_msg)
 
-# ===============[ دالة إتمام الطلب (Approve Order) ]===============
 def approve_order_process(order_index: int, context: CallbackContext, query):
     order_info = pending_orders.pop(order_index)
     if order_info['service'] in service_api_mapping:
@@ -373,7 +366,7 @@ def approve_order_process(order_index: int, context: CallbackContext, query):
         try:
             response = requests.post(API_URL, data=params)
             api_response = response.json()
-        except Exception as e:
+        except Exception:
             api_response = {"error": "فشل استدعاء API"}
 
         if "order" in api_response:
@@ -382,7 +375,6 @@ def approve_order_process(order_index: int, context: CallbackContext, query):
             order_info["refunded"] = False
             order_info["completed_at"] = time.time()
             completed_orders.append(order_info)
-
             context.bot.send_message(
                 chat_id=order_info['user_id'],
                 text=f"تم استلام طلبك وسوف يتم تنفيذة قريباً\nرقم طلبك ({api_response['order']})"
@@ -399,7 +391,6 @@ def approve_order_process(order_index: int, context: CallbackContext, query):
             btns = [[InlineKeyboardButton("رجوع", callback_data="review_orders")]]
             query.edit_message_text("فشل تنفيذ الطلب عبر API وتمت إعادة الرصيد للمستخدم.", reply_markup=InlineKeyboardMarkup(btns))
     else:
-        # الخدمة غير موجودة في mapping، نعتبرها غير تابعة للـ API
         order_info["order_number"] = "N/A"
         order_info["service_number"] = "N/A"
         order_info["refunded"] = False
@@ -412,7 +403,6 @@ def approve_order_process(order_index: int, context: CallbackContext, query):
         btns = [[InlineKeyboardButton("رجوع", callback_data="review_orders")]]
         query.edit_message_text("تم تأكيد الطلب وإشعار المستخدم.", reply_markup=InlineKeyboardMarkup(btns))
 
-# ===============[ التعامل مع أزرار الكيبورد (CallbackQuery) ]===============
 def button_handler(update: Update, context: CallbackContext):
     query = update.callback_query
     user_id = query.from_user.id
@@ -425,14 +415,13 @@ def button_handler(update: Update, context: CallbackContext):
         query.answer("لقد تم حضرك من استخدام البوت 🤣.", show_alert=True)
         return
 
-    # ===========[ التعامل مع الخدمات ]===========
+    # معالجة الضغط على أزرار الخدمات
     if data.startswith("service_"):
         service_name = data[len("service_"):]
         price = services_dict.get(service_name)
         if price is None:
             query.edit_message_text("الخدمة غير موجودة.")
             return
-
         current_balance = users_balance.get(user_id, 0.0)
         if current_balance < price:
             buttons = [
@@ -442,7 +431,7 @@ def button_handler(update: Update, context: CallbackContext):
             query.edit_message_text("رصيدك ليس كافياً.", reply_markup=InlineKeyboardMarkup(buttons))
             return
 
-        # تحديد رسالة التنبيه حسب نوع الخدمة
+        # تحديد رسالة التنبيه حسب نوع الخدمة:
         if "انستغرام" in service_name:
             message_text = (
                 "الرجاء إرسال رابط الخدمة الخاص بك\n"
@@ -486,7 +475,7 @@ def button_handler(update: Update, context: CallbackContext):
             query.edit_message_text("عذراً، أنت لست المالك.")
         return
 
-    # ===========[ أوامر المالك فقط ]===========
+    # أوامر المالك
     if user_id == ADMIN_ID:
         if data == "block_user":
             query.edit_message_text("أرسل اليوزرنيم أو الآيدي للمستخدم الذي تريد حضره:")
@@ -507,7 +496,8 @@ def button_handler(update: Update, context: CallbackContext):
                         user_display = f"User {uid}"
                     text += f"{user_display} (ID: {uid})\n"
                     keyboard.append([InlineKeyboardButton(f"إلغاء حظر {user_display}", callback_data=f"unblock_{uid}")])
-                query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                query.edit_message_text(text, reply_markup=reply_markup)
             return
 
         if data.startswith("unblock_"):
@@ -613,7 +603,7 @@ def button_handler(update: Update, context: CallbackContext):
                 text=f"تم استعادة رصيدك المخصوم ({refund_amount}$)"
             )
             query.answer("تم ارجاع الرصيد.")
-            # أعِد تحديث قائمة الطلبات نفسها
+
             filtered = []
             for i, o in enumerate(completed_orders):
                 if o.get("order_number", "N/A") != "N/A":
@@ -670,7 +660,8 @@ def button_handler(update: Update, context: CallbackContext):
             card_index = int(data.split("_")[-1])
             card_info = pending_cards[card_index]
             query.message.reply_text(
-                text=f"رقم الكارت:\n{card_info['card_number']}\nاضغط مطولاً للنسخ."
+                text=f"رقم الكارت:\n{card_info['card_number']}\nاضغط مطولاً للنسخ.",
+                parse_mode="Markdown"
             )
             query.answer()
             return
@@ -830,7 +821,7 @@ def button_handler(update: Update, context: CallbackContext):
             query.edit_message_text("تم إلغاء طلب شحن الايتونز وإعادة المبلغ للمستخدم.", reply_markup=InlineKeyboardMarkup(btns))
             return
 
-    # ===========[ أوامر المستخدم العادي ]===========
+    # أوامر المستخدمين العادية
     else:
         if data == "show_followers":
             followers_services = {k: v for k, v in services_dict.items() if "متابعين" in k}
@@ -964,7 +955,6 @@ def button_handler(update: Update, context: CallbackContext):
             query.edit_message_text("أرسل رقم الكارت المكون من 14 رقم أو 16 رقم:")
             return
 
-# ===============[ دالة استقبال الرسائل (MessageHandler) ]===============
 def handle_messages(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     text = update.message.text
@@ -973,12 +963,13 @@ def handle_messages(update: Update, context: CallbackContext):
         update.message.reply_text("لقد تم حضرك من استخدام البوت 🤣.\nانتظر حتى يتم الغاء حظرك.")
         return
 
-    # ===========[ إضافة الرصيد من قبل المالك ]===========
+    # معالجة إضافة الرصيد من قبل المالك: الخطوة الأولى - استلام آيدي المستخدم
     if user_id == ADMIN_ID and context.user_data.get("waiting_for_add_balance_user_id"):
         target_input = text.strip()
         try:
             target_id = int(target_input)
         except ValueError:
+            # محاولة الفحص باليوزرنيم
             found_user = None
             for usr in get_all_users():
                 if usr[2] and usr[2].lower() == target_input.lower():
@@ -988,18 +979,19 @@ def handle_messages(update: Update, context: CallbackContext):
                 update.message.reply_text("المستخدم غير موجود في قاعدة البيانات.")
                 return
             target_id = found_user[0]
-
         context.user_data["admin_target_id"] = target_id
         context.user_data["waiting_for_add_balance_user_id"] = False
         context.user_data["waiting_for_add_balance_amount"] = True
         update.message.reply_text("أرسل الآن المبلغ المراد إضافته إلى رصيد المستخدم:")
         return
 
+    # معالجة خصم الرصيد من قبل المالك: الخطوة الأولى - استلام آيدي المستخدم
     if user_id == ADMIN_ID and context.user_data.get("waiting_for_discount_user_id"):
         target_input = text.strip()
         try:
             target_id = int(target_input)
         except ValueError:
+            # محاولة الفحص باليوزرنيم
             found_user = None
             for usr in get_all_users():
                 if usr[2] and usr[2].lower() == target_input.lower():
@@ -1009,13 +1001,13 @@ def handle_messages(update: Update, context: CallbackContext):
                 update.message.reply_text("المستخدم غير موجود في قاعدة البيانات.")
                 return
             target_id = found_user[0]
-
         context.user_data["admin_target_id"] = target_id
         context.user_data["waiting_for_discount_user_id"] = False
         context.user_data["waiting_for_discount_amount"] = True
         update.message.reply_text("أرسل الآن المبلغ المراد خصمه من رصيد المستخدم:")
         return
 
+    # معالجة إضافة الرصيد من قبل المالك: الخطوة الثانية - استلام المبلغ وإضافته
     if user_id == ADMIN_ID and context.user_data.get("waiting_for_add_balance_amount"):
         amount_input = text.strip()
         try:
@@ -1033,9 +1025,12 @@ def handle_messages(update: Update, context: CallbackContext):
         users_balance[target_id] = new_balance
         sync_balance_to_db(target_id)
         update.message.reply_text(f"تمت إضافة {amount}$ إلى رصيد المستخدم (ID: {target_id}). الرصيد الجديد: {new_balance}$.")
+
+        # إرسال إشعار للمستخدم
         context.bot.send_message(chat_id=target_id, text=f"تنبيه: تمت إضافة {amount}$ إلى حسابك. رصيدك الجديد: {new_balance}$.")
         return
 
+    # معالجة خصم الرصيد من قبل المالك: الخطوة الثانية - استلام المبلغ وخصمه
     if user_id == ADMIN_ID and context.user_data.get("waiting_for_discount_amount"):
         amount_input = text.strip()
         try:
@@ -1056,10 +1051,12 @@ def handle_messages(update: Update, context: CallbackContext):
         users_balance[target_id] = new_balance
         sync_balance_to_db(target_id)
         update.message.reply_text(f"تم خصم {amount}$ من رصيد المستخدم (ID: {target_id}). الرصيد الجديد: {new_balance}$.")
+
+        # إرسال إشعار للمستخدم
         context.bot.send_message(chat_id=target_id, text=f"تنبيه: تم خصم {amount}$ من حسابك. رصيدك الجديد: {new_balance}$.")
         return
 
-    # ===========[ قبول الكارت المعلق ]===========
+    # معالجة قبول الكارت المعلق: استلام المبلغ المُدخل للمستخدم
     if user_id == ADMIN_ID and context.user_data.get("waiting_for_amount"):
         amount_input = text.strip()
         try:
@@ -1087,13 +1084,14 @@ def handle_messages(update: Update, context: CallbackContext):
         context.bot.send_message(chat_id=target_id, text=f"تنبيه: تم شحن رصيدك بمقدار {amount}$ بنجاح.")
         return
 
-    # ===========[ حضر المستخدم ]===========
+    # حضر المستخدم
     if context.user_data.get("waiting_for_block") and user_id == ADMIN_ID:
         block_input = text.strip()
         context.user_data["waiting_for_block"] = False
         try:
             target_id = int(block_input)
         except ValueError:
+            # محاولة الفحص باليوزرنيم
             found_user = None
             for usr in get_all_users():
                 if usr[2] and usr[2].lower() == block_input.lower():
@@ -1107,216 +1105,198 @@ def handle_messages(update: Update, context: CallbackContext):
         update.message.reply_text(f"تم حضر المستخدم بنجاح. (ID: {target_id})")
         return
 
-    # ===========[ رسالة إعلان المالك ]===========
+    # رسالة إعلان المالك
     if context.user_data.get("waiting_for_broadcast") and user_id == ADMIN_ID:
         context.user_data["waiting_for_broadcast"] = False
-        announcement_prefix = "✨ إعلان من مالك البوت ✨\n"
-        broadcast_message = announcement_prefix + text
-        # إرسال للجميع
+        announcement_prefix = "✨ إعلان من مالك البوت ✨\n\n"
+        broadcast_text = announcement_prefix + text
         all_users = get_all_users()
+        sent_count = 0
         for usr in all_users:
+            uid = usr[0]
             try:
-                context.bot.send_message(chat_id=usr[0], text=broadcast_message)
+                context.bot.send_message(chat_id=uid, text=broadcast_text)
+                sent_count += 1
             except:
                 pass
-        update.message.reply_text("تم إرسال الإعلان لجميع المستخدمين.")
+        update.message.reply_text(f"تم إرسال الإعلان إلى {sent_count} مستخدم.")
         return
 
-    # ===========[ فحص حالة الطلب عبر API ]===========
-    if context.user_data.get("waiting_for_api_order_status"):
-        context.user_data["waiting_for_api_order_status"] = False
-        order_id_input = text.strip()
-        params = {
-            'key': API_KEY,
-            'action': 'status',
-            'order': order_id_input
-        }
-        try:
-            response = requests.post(API_URL, data=params)
-            api_response = response.json()
-            update.message.reply_text(f"نتيجة الفحص: {api_response}")
-        except Exception as e:
-            update.message.reply_text(f"فشل الاستعلام عن حالة الطلب. {e}")
-        return
-
-    # ===========[ استقبال رابط الخدمة ]===========
-    if context.user_data.get("selected_service") and context.user_data.get("service_price"):
-        link = text.strip()
-        service_name = context.user_data.pop("selected_service")
-        price = context.user_data.pop("service_price")
+    # بقية المنطق الخاص بالمستخدم إذا احتجت...
+    # ...
+    # مثال: استقبال رابط الخدمة المحدد
+    if context.user_data.get("selected_service") and not context.user_data.get("waiting_for_card"):
+        service_name = context.user_data["selected_service"]
+        price = context.user_data["service_price"]
         current_balance = users_balance.get(user_id, 0.0)
         if current_balance < price:
-            update.message.reply_text("رصيدك لا يكفي.")
+            update.message.reply_text("رصيدك لا يكفي لإتمام الطلب.")
+            clear_all_waiting_flags(context)
             return
-        new_balance = current_balance - price
-        users_balance[user_id] = new_balance
+
+        # خصم الرصيد
+        users_balance[user_id] = current_balance - price
         sync_balance_to_db(user_id)
 
-        full_name = update.effective_user.full_name
-        username = update.effective_user.username or "NoUsername"
-        order_info = {
+        # حفظ الطلب في قائمة الطلبات المعلقة أو تنفيذه عبر API حسب الرغبة
+        pending_orders.append({
             "user_id": user_id,
-            "full_name": full_name,
-            "username": username,
+            "username": update.effective_user.username,
+            "full_name": update.effective_user.full_name,
             "service": service_name,
             "price": price,
-            "link": link
-        }
-        pending_orders.append(order_info)
-        update.message.reply_text(
-            f"تم استقبال طلبك للخدمة: {service_name}\n"
-            f"تم خصم {price}$ من رصيدك. رصيدك الآن: {new_balance}$\n"
-            "سوف يتم مراجعته من قبل الإدارة قريباً."
-        )
+            "link": text,  # الرابط الذي أرسله المستخدم
+            "time": time.time()
+        })
+
+        update.message.reply_text("تم استلام طلبك وسيتم تنفيذه قريبًا.")
+        # إشعار المالك بالطلب
+        logger.info(f"طلب جديد من {user_id} - خدمة: {service_name} - رابط: {text}")
+        context.bot.send_message(chat_id=ADMIN_ID, text=f"طلب جديد من @{update.effective_user.username} لخدمة {service_name}\nالرابط: {text}")
+        clear_all_waiting_flags(context)
         return
 
-    # ===========[ استقبال رقم الكارت (شحن اسياسيل) ]===========
-    if context.user_data.get("waiting_for_card"):
-        card_number = text.strip()
-        full_name = update.effective_user.full_name
-        username = update.effective_user.username or "NoUsername"
-        card_info = {
-            "user_id": user_id,
-            "full_name": full_name,
-            "username": username,
-            "card_number": card_number
-        }
-        pending_cards.append(card_info)
-        context.user_data["waiting_for_card"] = False
-        update.message.reply_text("تم استلام رقم الكارت، سيقوم المالك بمراجعة طلبك قريباً.")
-        return
-
-    # ===========[ استقبال آيدي ببجي ]===========
-    if context.user_data.get("selected_pubg_service") and context.user_data.get("pubg_service_price"):
-        pubg_id = text.strip()
-        service_name = context.user_data.pop("selected_pubg_service")
-        price = context.user_data.pop("pubg_service_price")
+    # مثال: استقبال رقم PUBG ID
+    if context.user_data.get("selected_pubg_service"):
+        service_name = context.user_data["selected_pubg_service"]
+        price = context.user_data["pubg_service_price"]
         current_balance = users_balance.get(user_id, 0.0)
         if current_balance < price:
-            update.message.reply_text("رصيدك لا يكفي.")
+            update.message.reply_text("رصيدك لا يكفي لإتمام الطلب.")
+            clear_all_waiting_flags(context)
             return
-        new_balance = current_balance - price
-        users_balance[user_id] = new_balance
+
+        # خصم الرصيد
+        users_balance[user_id] = current_balance - price
         sync_balance_to_db(user_id)
 
-        full_name = update.effective_user.full_name
-        username = update.effective_user.username or "NoUsername"
-        order_info = {
+        # حفظ الطلب في قائمة الطلبات المعلقة
+        pending_pubg_orders.append({
             "user_id": user_id,
-            "full_name": full_name,
-            "username": username,
+            "username": update.effective_user.username,
+            "full_name": update.effective_user.full_name,
             "service": service_name,
             "price": price,
-            "pubg_id": pubg_id
-        }
-        pending_pubg_orders.append(order_info)
-        update.message.reply_text(
-            f"تم استقبال طلبك لشحن شدات ببجي: {service_name}\n"
-            f"تم خصم {price}$ من رصيدك. رصيدك الآن: {new_balance}$\n"
-            "سوف يتم مراجعته من قبل الإدارة قريباً."
-        )
+            "pubg_id": text,  # رقم الآيدي الذي أرسله المستخدم
+            "time": time.time()
+        })
+
+        update.message.reply_text("تم استلام طلب شحن شدات ببجي وسيتم تنفيذه قريبًا.")
+        context.bot.send_message(chat_id=ADMIN_ID, text=f"طلب شدات ببجي من @{update.effective_user.username}\nالخدمة: {service_name}, الآيدي: {text}")
+        clear_all_waiting_flags(context)
         return
 
-    # ===========[ استقبال تأكيد طلب شحن ايتونز (رقم 1) ]===========
+    # مثال: استقبال تأكيد شراء ايتونز
     if context.user_data.get("waiting_for_itunes_confirm"):
-        context.user_data["waiting_for_itunes_confirm"] = False
+        service_name = context.user_data["selected_itunes_service"]
+        price = context.user_data["itunes_service_price"]
         if text.strip() != "1":
-            update.message.reply_text("تم إلغاء الطلب، لم تقم بتأكيده.")
-            context.user_data.pop("selected_itunes_service", None)
-            context.user_data.pop("itunes_service_price", None)
+            update.message.reply_text("تم إلغاء طلبك. (اكتب الرقم 1 لتأكيد الطلب)")
+            clear_all_waiting_flags(context)
             return
-        # تأكيد الطلب
-        service_name = context.user_data.pop("selected_itunes_service")
-        price = context.user_data.pop("itunes_service_price")
+
         current_balance = users_balance.get(user_id, 0.0)
         if current_balance < price:
-            update.message.reply_text("رصيدك لا يكفي.")
+            update.message.reply_text("رصيدك لا يكفي لإتمام الطلب.")
+            clear_all_waiting_flags(context)
             return
-        new_balance = current_balance - price
-        users_balance[user_id] = new_balance
+
+        # خصم الرصيد
+        users_balance[user_id] = current_balance - price
         sync_balance_to_db(user_id)
 
-        full_name = update.effective_user.full_name
-        username = update.effective_user.username or "NoUsername"
-        itunes_order = {
+        # إضافة الطلب في قائمة طلبات الايتونز
+        pending_itunes_orders.append({
             "user_id": user_id,
-            "full_name": full_name,
-            "username": username,
-            "service": service_name,
-            "price": price
-        }
-        pending_itunes_orders.append(itunes_order)
-        update.message.reply_text(
-            f"تم خصم {price}$ من رصيدك، وتسجيل طلب الايتونز: {service_name}\n"
-            "سيتم تنفيذه من قبل الإدارة في أقرب وقت."
-        )
-        return
-
-    # ===========[ استقبال رابط تليجرام ]===========
-    if context.user_data.get("waiting_for_telegram_link"):
-        link = text.strip()
-        service_name = context.user_data.pop("selected_telegram_service")
-        price = context.user_data.pop("telegram_service_price")
-        context.user_data["waiting_for_telegram_link"] = False
-        current_balance = users_balance.get(user_id, 0.0)
-        if current_balance < price:
-            update.message.reply_text("رصيدك لا يكفي.")
-            return
-        new_balance = current_balance - price
-        users_balance[user_id] = new_balance
-        sync_balance_to_db(user_id)
-
-        full_name = update.effective_user.full_name
-        username = update.effective_user.username or "NoUsername"
-        order_info = {
-            "user_id": user_id,
-            "full_name": full_name,
-            "username": username,
+            "username": update.effective_user.username,
+            "full_name": update.effective_user.full_name,
             "service": service_name,
             "price": price,
-            "link": link
-        }
-        pending_orders.append(order_info)
-        update.message.reply_text(
-            f"تم استقبال طلبك لخدمة تليجرام: {service_name}\n"
-            f"تم خصم {price}$ من رصيدك. رصيدك الآن: {new_balance}$\n"
-            "سوف يتم مراجعته من قبل الإدارة قريباً."
+            "time": time.time()
+        })
+
+        update.message.reply_text(f"تم تأكيد طلبك لشحن الايتونز: {service_name}. سيتم تنفيذ طلبك قريبًا.")
+        context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=f"طلب شحن ايتونز جديد من @{update.effective_user.username}\nالخدمة: {service_name}"
         )
+        clear_all_waiting_flags(context)
         return
 
-    # ===========[ استقبال كود هدايا ايتونز من المالك ]===========
-    if user_id == ADMIN_ID and context.user_data.get("waiting_for_itunes_code"):
-        code = text.strip()
-        itunes_order = context.user_data.pop("itunes_to_complete", None)
-        itunes_index = context.user_data.pop("itunes_to_complete_index", None)
-        context.user_data["waiting_for_itunes_code"] = False
-        if itunes_order is None or itunes_index is None:
-            update.message.reply_text("حدث خطأ: لا يوجد طلب ايتونز مستهدف.")
+    # مثال: استقبال رابط قناة التليجرام
+    if context.user_data.get("waiting_for_telegram_link"):
+        service_name = context.user_data["selected_telegram_service"]
+        price = context.user_data["telegram_service_price"]
+        current_balance = users_balance.get(user_id, 0.0)
+        if current_balance < price:
+            update.message.reply_text("رصيدك لا يكفي لإتمام الطلب.")
+            clear_all_waiting_flags(context)
             return
+
+        # خصم الرصيد
+        users_balance[user_id] = current_balance - price
+        sync_balance_to_db(user_id)
+
+        # حفظ الطلب في قائمة الطلبات المعلقة
+        pending_orders.append({
+            "user_id": user_id,
+            "username": update.effective_user.username,
+            "full_name": update.effective_user.full_name,
+            "service": service_name,
+            "price": price,
+            "link": text,  # رابط القناة أو رابط الدعوة
+            "time": time.time()
+        })
+
+        update.message.reply_text("تم استلام طلبك لخدمات التليجرام وسيتم تنفيذه قريبًا.")
+        context.bot.send_message(chat_id=ADMIN_ID, text=f"طلب تليجرام جديد من @{update.effective_user.username}\nالخدمة: {service_name}, رابط: {text}")
+        clear_all_waiting_flags(context)
+        return
+
+    # معالجة إدخال كود الايتونز عند اكتمال الطلب
+    if context.user_data.get("waiting_for_itunes_code") and user_id == ADMIN_ID:
+        itunes_order = context.user_data.get("itunes_to_complete")
+        itunes_index = context.user_data.get("itunes_to_complete_index")
+        if not itunes_order:
+            update.message.reply_text("لم يتم العثور على الطلب.")
+            clear_all_waiting_flags(context)
+            return
+
+        code_text = text.strip()
+        # نفترض هنا أنك سترسل الكود للمستخدم
+        context.bot.send_message(chat_id=itunes_order["user_id"], text=f"تم تنفيذ طلبك بنجاح. كود الهدايا:\n{code_text}")
+        # إزالة الطلب من قائمة الانتظار
         try:
             pending_itunes_orders.pop(itunes_index)
         except IndexError:
-            update.message.reply_text("حدث خطأ أثناء إزالة الطلب من القائمة.")
-            return
-        context.bot.send_message(
-            chat_id=itunes_order["user_id"],
-            text=f"تم تنفيذ طلبك لشحن {itunes_order['service']}\nكود الهدايا:\n{code}"
-        )
-        update.message.reply_text("تم إرسال الكود للمستخدم بنجاح.")
+            pass
+        update.message.reply_text("تم إرسال كود الهدايا للمستخدم.")
+        clear_all_waiting_flags(context)
         return
 
-# ===============[ الدالة الرئيسية لتشغيل البوت ]===============
+    # معالجة شحن الرصيد عبر اسياسيل (كارت)
+    if context.user_data.get("waiting_for_card"):
+        # هنا يمكنك التحقق من صحة الكارت، أو حفظه بقائمة الـ pending_cards لمراجعة المالك
+        card_number = text.strip()
+        pending_cards.append({
+            "user_id": user_id,
+            "username": update.effective_user.username,
+            "full_name": update.effective_user.full_name,
+            "card_number": card_number
+        })
+        update.message.reply_text("تم استلام رقم الكارت بنجاح وسيتم مراجعته قريبًا.")
+        context.bot.send_message(chat_id=ADMIN_ID, text=f"كارت جديد من @{update.effective_user.username}\nالكارت: {card_number}")
+        clear_all_waiting_flags(context)
+        return
+
 def main():
-    # إعداد Updater
-    updater = Updater(token=TOKEN, use_context=True)
+    updater = Updater(TOKEN, use_context=True)
     dp = updater.dispatcher
 
-    # ربط الـ Handlers
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(CallbackQueryHandler(button_handler))
     dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_messages))
 
-    # بدء التشغيل بالنمط العادي (Long Polling)
     updater.start_polling()
     updater.idle()
 
