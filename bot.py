@@ -14,10 +14,10 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 logger = logging.getLogger(__name__)
 
 # إعداد المتغيرات العامة
-ADMIN_ID = 7655504656  # عدل الآيدي حسب المالك
-TOKEN = "8138615524:AAEZGgBRMSzLxxC7F6NquT4dbmk5vA-2w4M"  # ضع توكن البوت الخاص بك هنا
-API_KEY = "8a94d8898e614971fde46ce1ca892202"  # ضع API KEY الخاص بك هنا
-API_URL = "https://kd1s.com/api/v2"  # تأكد من صحة رابط API
+ADMIN_ID = "ADMIN_ID"  # عدل الآيدي حسب المالك
+TOKEN = "TOKEN"  # ضع توكن البوت الخاص بك هنا
+API_KEY = "API_KEY"  # ضع API KEY الخاص بك هنا
+API_URL = "API_URL"  # تأكد من صحة رابط API
 
 # تعريف القواميس الخاصة بالخدمات
 
