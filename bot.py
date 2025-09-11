@@ -17,10 +17,10 @@ from telegram.ext import Updater, CommandHandler, MessageHandler, CallbackQueryH
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# مالك البوت (لا تلمسه إلا إذا تريد تبديله)
+# مالك البوت (يمكن تعديله)
 ADMIN_ID = 7655504656
 
-# متغيرات البيئة (يفضّل استخدامها على هيروكو/ريلواي)
+# متغيرات البيئة (يمكنك استبدالها بقيم صلبة)
 TOKEN   = os.getenv("BOT_TOKEN", "")
 API_KEY = os.getenv("KD1S_API_KEY", "3e4f5503764fa06793da9a76d24d65a4")
 API_URL = os.getenv("KD1S_API_URL", "https://kd1s.com/api/v2")
@@ -189,8 +189,7 @@ def is_owner(user_id: int) -> bool:
 
 def is_moderator(user_id: int) -> bool:
     cursor.execute("SELECT is_active FROM moderators WHERE user_id=?", (user_id,))
-    row = cursor.fetchone
-    row = row() if callable(row) else row
+    row = cursor.fetchone()
     if not row:
         return False
     return bool(row[0] == 1)
@@ -240,9 +239,17 @@ def admin_menu_keyboard():
         [InlineKeyboardButton("طلبات شدات ببجي", callback_data="pending_pubg_orders"), InlineKeyboardButton("فحص رصيد API", callback_data="api_check_balance")],
         [InlineKeyboardButton("فحص حالة طلب API", callback_data="api_order_status"), InlineKeyboardButton("اعلان البوت", callback_data="admin_announce")],
         [InlineKeyboardButton("طلبات شحن الايتونز", callback_data="pending_itunes_orders")],
+        [InlineKeyboardButton("إدارة المشرفين", callback_data="admin_mods")],  # جديد
         [InlineKeyboardButton("رجوع", callback_data="back_main")]
     ]
     return InlineKeyboardMarkup(buttons)
+
+def admin_mods_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("➕ إضافة مشرف", callback_data="admin_mods_add")],
+        [InlineKeyboardButton("📋 عرض المشرفين", callback_data="admin_mods_list")],
+        [InlineKeyboardButton("رجوع", callback_data="admin_menu")],
+    ])
 
 def moderator_menu_keyboard():
     buttons = [
@@ -311,8 +318,10 @@ def clear_all_waiting_flags(context: CallbackContext):
         "waiting_for_itunes_confirm", "itunes_temp_choice",
         "waiting_for_itunes_code", "itunes_to_complete", "itunes_to_complete_index",
         "selected_telegram_service", "telegram_service_price", "waiting_for_telegram_link",
-        # جديدة للمشرف
+        # للمشرف
         "mod_card_idx", "mod_waiting_suggest_amount",
+        # لإضافة مشرف عبر زر
+        "waiting_for_add_mod_user_id",
     ]
     for key in waiting_keys:
         context.user_data.pop(key, None)
@@ -454,7 +463,7 @@ def api_check_balance(update: Update, context: CallbackContext):
     else:
         update.message.reply_text(text_msg)
 
-# تنفيذ طلب API (نفس منطقك)
+# تنفيذ طلب API (كما في منطقك)
 def approve_order_process(order_index: int, context: CallbackContext, query):
     order_info = pending_orders.pop(order_index)
     if order_info['service'] in service_api_mapping:
@@ -672,7 +681,7 @@ def button_handler(update: Update, context: CallbackContext):
         query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(btns))
         return
 
-    # ------ لوحة المستخدم/المالك (باقي منطقك) ------
+    # ------ لوحة المستخدم/المالك ------
     if data == "back_main":
         query.edit_message_text("القائمة الرئيسية:", reply_markup=main_menu_keyboard(user_id))
         return
@@ -692,7 +701,7 @@ def button_handler(update: Update, context: CallbackContext):
             query.edit_message_text("عذراً، أنت لست المالك.")
         return
 
-    # == أوامر المالك الأصلية ==
+    # == أوامر المالك الأصلية + إدارة المشرفين ==
     if is_owner(user_id):
         if data == "block_user":
             query.edit_message_text("أرسل اليوزرنيم أو الآيدي للمستخدم الذي تريد حضره:")
@@ -1026,6 +1035,44 @@ def button_handler(update: Update, context: CallbackContext):
             query.edit_message_text("تم إلغاء طلب شحن الايتونز وإعادة المبلغ للمستخدم.", reply_markup=InlineKeyboardMarkup(btns))
             return
 
+        # إدارة المشرفين (قائمة فرعية)
+        if data == "admin_mods":
+            query.edit_message_text("إدارة المشرفين:", reply_markup=admin_mods_keyboard())
+            return
+
+        if data == "admin_mods_add":
+            context.user_data["waiting_for_add_mod_user_id"] = True
+            query.edit_message_text(
+                "أرسل الآن آيدي المستخدم أو اليوزر لإضافته كمشرف.\n"
+                "نصيحة: اطلب من المستخدم إرسال أي رسالة للبوت ثم اعمل Reply/forward لمعرفة الـID."
+            )
+            return
+
+        if data == "admin_mods_list":
+            mods = list_moderators()
+            if not mods:
+                btns = [[InlineKeyboardButton("رجوع", callback_data="admin_mods")]]
+                query.edit_message_text("لا يوجد مشرفون حالياً.", reply_markup=InlineKeyboardMarkup(btns))
+                return
+            text_msg = "المشرفون الحاليون:\n\n"
+            kb = []
+            for m in mods:
+                text_msg += f"- {m}\n"
+                kb.append([InlineKeyboardButton(f"❌ حذف {m}", callback_data=f"admin_mods_del_{m}")])
+            kb.append([InlineKeyboardButton("رجوع", callback_data="admin_mods")])
+            query.edit_message_text(text_msg, reply_markup=InlineKeyboardMarkup(kb))
+            return
+
+        if data.startswith("admin_mods_del_"):
+            try:
+                target = int(data.split("_")[-1])
+            except Exception:
+                query.edit_message_text("ID غير صالح.", reply_markup=admin_mods_keyboard())
+                return
+            remove_moderator(target)
+            query.edit_message_text(f"تم حذف {target} من المشرفين ✅", reply_markup=admin_mods_keyboard())
+            return
+
     # == أوامر المستخدم العادية ==
     else:
         if data == "show_followers":
@@ -1168,7 +1215,7 @@ def handle_messages(update: Update, context: CallbackContext):
         update.message.reply_text("لقد تم حضرك من استخدام البوت 🤣.\nانتظر حتى يتم الغاء حظرك.")
         return
 
-    # مالك: إضافة/خصم رصيد (كما هو)
+    # مالك: إضافة/خصم رصيد
     if is_owner(user_id) and context.user_data.get("waiting_for_add_balance_user_id"):
         target_input = text.strip()
         try:
@@ -1272,10 +1319,39 @@ def handle_messages(update: Update, context: CallbackContext):
         update.message.reply_text(f"تم حضر المستخدم بنجاح. (ID: {target_id})")
         return
 
-    # إعلان المالك (نفس نظامك)
+    # إعلان المالك
     if context.user_data.get("waiting_for_broadcast") and is_owner(user_id):
         context.user_data["waiting_for_broadcast"] = False
         broadcast_ad(update, context)
+        return
+
+    # إضافة مشرف عبر إدخال من المالك (زر إدارة المشرفين)
+    if is_owner(user_id) and context.user_data.get("waiting_for_add_mod_user_id"):
+        context.user_data["waiting_for_add_mod_user_id"] = False
+        raw = (text or "").strip()
+        target_id = None
+
+        # محاولة كـ ID مباشر
+        try:
+            target_id = int(raw)
+        except ValueError:
+            # محاولة باليوزر
+            handle = raw.lstrip("@").lower()
+            for usr in get_all_users():
+                if usr[2] and usr[2].lower() == handle:
+                    target_id = usr[0]
+                    break
+
+        if not target_id:
+            update.message.reply_text("تعذر إيجاد المستخدم. أرسل ID صحيح أو @username موجود في قاعدة البيانات.")
+            return
+
+        if target_id == ADMIN_ID:
+            update.message.reply_text("هذا المستخدم هو المالك بالفعل.")
+            return
+
+        add_moderator(target_id)
+        update.message.reply_text(f"تمت إضافة {target_id} كمشرف ✅")
         return
 
     # كارت الشحن من المستخدم
@@ -1346,7 +1422,7 @@ def handle_messages(update: Update, context: CallbackContext):
             update.message.reply_text("❌ فشل الاتصال بالنظام الخارجي. حاول مرة أخرى لاحقاً.")
         return
 
-    # اختيار خدمة عامة: استلام الرابط وتنفيذ/تعليق
+    # اختيار خدمة عامة: استلام الرابط
     if "selected_service" in context.user_data and "service_price" in context.user_data:
         link_text = text.strip()
         if not link_text:
@@ -1384,7 +1460,7 @@ def handle_messages(update: Update, context: CallbackContext):
             context.bot.send_message(chat_id=ADMIN_ID, text="هناك طلب رشق جديد في الطلبات المعلقة.")
         return
 
-    # شدات ببجي: استلام آيدي
+    # شدات ببجي
     if "selected_pubg_service" in context.user_data and "pubg_service_price" in context.user_data:
         pubg_id_text = text.strip()
         service_name = context.user_data.pop("selected_pubg_service")
@@ -1459,7 +1535,7 @@ def handle_messages(update: Update, context: CallbackContext):
             return
         users_balance[user_id] = current_balance - price
         sync_balance_to_db(user_id)
-        # تحديد الكمية من service_name
+        # تحديد الكمية من اسم الخدمة
         quantity = 0
         if "1k" in service_name: quantity = 1000
         elif "2k" in service_name: quantity = 2000
