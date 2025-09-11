@@ -14,10 +14,10 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 logger = logging.getLogger(__name__)
 
 # إعداد المتغيرات العامة
-ADMIN_ID = "ADMIN_ID"  # عدل الآيدي حسب المالك
-TOKEN = "TOKEN"  # ضع توكن البوت الخاص بك هنا
-API_KEY = "API_KEY"  # ضع API KEY الخاص بك هنا
-API_URL = "API_URL"  # تأكد من صحة رابط API
+ADMIN_ID =   # عدل الآيدي حسب المالك
+TOKEN = ""  # ضع توكن البوت الخاص بك هنا
+API_KEY = ""  # ضع API KEY الخاص بك هنا
+API_URL = ""  # تأكد من صحة رابط API
 
 # تعريف القواميس الخاصة بالخدمات
 
