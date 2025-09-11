@@ -14,7 +14,7 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 logger = logging.getLogger(__name__)
 
 # إعداد المتغيرات العامة
-ADMIN_ID =   # عدل الآيدي حسب المالك
+ADMIN_ID = 7655504656  # عدل الآيدي حسب المالك
 TOKEN = ""  # ضع توكن البوت الخاص بك هنا
 API_KEY = ""  # ضع API KEY الخاص بك هنا
 API_URL = ""  # تأكد من صحة رابط API
