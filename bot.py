@@ -448,7 +448,7 @@ def get_effective_price(user_id: int, service_name: str, base_price: float, kind
         in_80 = (
             "متابعين" in service_name or
             "لايكات" in service_name or
-            "مشاهدات بث" in service_name or
+            "مشاهدات بث" in service_name أو
             "رفع سكور" in service_name or
             "نقاط تحديات" in service_name or
             kind == "telegram"
@@ -499,7 +499,7 @@ def admin_menu_keyboard():
         [InlineKeyboardButton("اعلان البوت", callback_data="admin_announce")],
         [InlineKeyboardButton("فحص رصيد API", callback_data="api_check_balance"),
          InlineKeyboardButton("فحص حالة طلب API", callback_data="api_order_status")],
-        [InlineKeyboardButton("المتصدرين🎉", callback_data="show_leaderboard")],  # ← (اختياري) إظهار المتصدرين داخل لوحة المالك
+        [InlineKeyboardButton("المتصدرين🎉", callback_data="show_leaderboard")],
         [InlineKeyboardButton("رجوع", callback_data="back_main")]
     ]
     return InlineKeyboardMarkup(buttons)
@@ -621,6 +621,9 @@ def start(update: Update, context: CallbackContext):
     if ban_msg:
         update.message.reply_text(ban_msg)
         return
+
+    # ✅ إصلاح التشابك: امسح أي حالات/أعلام انتظار قديمة عند /start
+    clear_all_waiting_flags(context)
 
     full_name = update.effective_user.full_name
     username = update.effective_user.username or "NoUsername"
@@ -1664,7 +1667,7 @@ def handle_messages(update: Update, context: CallbackContext):
         card_info = context.user_data.get("card_to_approve")
         card_index = context.user_data.get("card_to_approve_index")
 
-        if card_info is None or card_index is None or not (0 <= card_index < len(pending_cards)):
+        if card_info is None or card_index is None أو not (0 <= card_index < len(pending_cards)):
             update.message.reply_text("تعذر العثور على الكارت المحدد.")
             clear_all_waiting_flags(context)
             return
