@@ -15,7 +15,7 @@ import requests
 import time
 import os
 from typing import Optional
-from html import escape  # ← لإصلاح مشكلة Markdown عند عرض المتصدرين
+from html import escape
 
 from telegram import (
     Update,
@@ -44,7 +44,7 @@ logger = logging.getLogger("TG_BOT")
 # الإعدادات (Environment)
 # =========================
 ADMIN_ID = int(os.getenv("ADMIN_ID", "7655504656"))   # مثال: 7655504656
-TOKEN = os.getenv("TOKEN", "8138615524:AAFr6m5Z4_gY0k7pdg7teD9nM8ReDC-KQKU")  # مثال: "123456:AA...."
+TOKEN = os.getenv("TOKEN", "8138615524:AAFr6m5Z4_gY0k7pdg7teD9نM8ReDC-KQKU")  # مثال: "123456:AA...."
 API_KEY = os.getenv("API_KEY", "25a9ceb07be0d8b2ba88e70dcbe92e06")
 API_URL = os.getenv("API_URL", "https://kd1s.com/api/v2")
 SUPPORT_CONTACT = os.getenv("SUPPORT_CONTACT", "@z396r")  # لدعم طرق الشحن الإضافية
@@ -440,21 +440,29 @@ def list_moderators():
     ) or []
 
 def get_effective_price(user_id: int, service_name: str, base_price: float, kind: str = "generic") -> float:
+    """
+    خصومات للمشرفين فقط:
+    - المتابعين/المشاهدات المباشرة/اللايكات/رفع سكور/خدمات التليجرام ⇒ *0.8
+    - ايتونز/ببجي ⇒ *0.9
+    """
     try:
         if not is_moderator(user_id):
             return base_price
+
         if kind in ("itunes", "pubg") or ("ايتونز" in service_name or "ببجي" in service_name):
             return round(float(base_price) * 0.90, 2)
+
         in_80 = (
             "متابعين" in service_name or
             "لايكات" in service_name or
-            "مشاهدات بث" in service_name أو
+            "مشاهدات بث" in service_name or
             "رفع سكور" in service_name or
             "نقاط تحديات" in service_name or
             kind == "telegram"
         )
         if in_80:
             return round(float(base_price) * 0.80, 2)
+
         return base_price
     except Exception as e:
         logger.error("get_effective_price error: %s", e)
@@ -622,7 +630,7 @@ def start(update: Update, context: CallbackContext):
         update.message.reply_text(ban_msg)
         return
 
-    # ✅ إصلاح التشابك: امسح أي حالات/أعلام انتظار قديمة عند /start
+    # مسح حالات قديمة لمنع التشابك
     clear_all_waiting_flags(context)
 
     full_name = update.effective_user.full_name
@@ -734,7 +742,7 @@ def button_handler(update: Update, context: CallbackContext):
         query.edit_message_text("اختر القسم:", reply_markup=services_menu_keyboard())
         return
 
-    # ======= المتصدرين🎉 (HTML بدلاً من Markdown) =======
+    # ======= المتصدرين🎉 =======
     if data == "show_leaderboard":
         top = get_top_spenders(10)
         header = (
@@ -757,7 +765,6 @@ def button_handler(update: Update, context: CallbackContext):
         kb = [[InlineKeyboardButton("رجوع", callback_data="back_main")]]
         query.edit_message_text(text_msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
         return
-    # ===========================
 
     # ======= عرض الأقسام بأسعار =======
     if data == "show_followers":
@@ -1667,7 +1674,7 @@ def handle_messages(update: Update, context: CallbackContext):
         card_info = context.user_data.get("card_to_approve")
         card_index = context.user_data.get("card_to_approve_index")
 
-        if card_info is None or card_index is None أو not (0 <= card_index < len(pending_cards)):
+        if card_info is None or card_index is None or not (0 <= card_index < len(pending_cards)):
             update.message.reply_text("تعذر العثور على الكارت المحدد.")
             clear_all_waiting_flags(context)
             return
