@@ -7,7 +7,7 @@
 - زر "الطلبات المعلّقة (الخدمات)" لاعتماد/رفض الطلبات وتنفيذ الـ API
 - قراءة الإعدادات من متغيّرات البيئة (Heroku Config Vars) أو القيم الافتراضية
 - ميزة الحماية: حظر ساعتين عند تكرار نفس كارت آسياسيل > 2 أو سبام كروت خلال وقت قصير
-- المتصدرين🎉: عرض أعلى 10 إنفاقًا مع الجوائز (إصلاح العرض باستخدام HTML)
+- المتصدرين🎉: عرض أعلى 10 إنفاقًا مع الجوائز
 """
 
 import logging
@@ -44,7 +44,7 @@ logger = logging.getLogger("TG_BOT")
 # الإعدادات (Environment)
 # =========================
 ADMIN_ID = int(os.getenv("ADMIN_ID", "7655504656"))   # مثال: 7655504656
-TOKEN = os.getenv("TOKEN", "8138615524:AAFr6m5Z4_gY0k7pdg7teD9نM8ReDC-KQKU")  # مثال: "123456:AA...."
+TOKEN = os.getenv("TOKEN", "8138615524:AAFr6m5Z4_gY0k7pdg7teD9nM8ReDC-KQKU")  # مثال: "123456:AA...."
 API_KEY = os.getenv("API_KEY", "25a9ceb07be0d8b2ba88e70dcbe92e06")
 API_URL = os.getenv("API_URL", "https://kd1s.com/api/v2")
 SUPPORT_CONTACT = os.getenv("SUPPORT_CONTACT", "@z396r")  # لدعم طرق الشحن الإضافية
@@ -843,6 +843,8 @@ def button_handler(update: Update, context: CallbackContext):
                 [InlineKeyboardButton("شحن عبر سوبركي", callback_data="charge_superkey")],
                 [InlineKeyboardButton("شحن عبر زين كاش", callback_data="charge_zaincash")],
                 [InlineKeyboardButton("شحن عبر USDT", callback_data="charge_usdt")],
+                [InlineKeyboardButton("شحن عبر نقاط سنتات", callback_data="charge_cent_points")],
+                [InlineKeyboardButton("شحن عبر هلابي", callback_data="charge_helabi")],
                 [InlineKeyboardButton("رجوع", callback_data="show_services")]
             ]
             query.edit_message_text("رصيدك ليس كافياً.", reply_markup=InlineKeyboardMarkup(buttons))
@@ -884,6 +886,8 @@ def button_handler(update: Update, context: CallbackContext):
                 [InlineKeyboardButton("شحن عبر سوبركي", callback_data="charge_superkey")],
                 [InlineKeyboardButton("شحن عبر زين كاش", callback_data="charge_zaincash")],
                 [InlineKeyboardButton("شحن عبر USDT", callback_data="charge_usdt")],
+                [InlineKeyboardButton("شحن عبر نقاط سنتات", callback_data="charge_cent_points")],
+                [InlineKeyboardButton("شحن عبر هلابي", callback_data="charge_helabi")],
                 [InlineKeyboardButton("رجوع", callback_data="show_pubg")]
             ]
             query.edit_message_text("رصيدك ليس كافياً.", reply_markup=InlineKeyboardMarkup(buttons))
@@ -905,6 +909,8 @@ def button_handler(update: Update, context: CallbackContext):
                 [InlineKeyboardButton("شحن عبر سوبركي", callback_data="charge_superkey")],
                 [InlineKeyboardButton("شحن عبر زين كاش", callback_data="charge_zaincash")],
                 [InlineKeyboardButton("شحن عبر USDT", callback_data="charge_usdt")],
+                [InlineKeyboardButton("شحن عبر نقاط سنتات", callback_data="charge_cent_points")],
+                [InlineKeyboardButton("شحن عبر هلابي", callback_data="charge_helabi")],
                 [InlineKeyboardButton("رجوع", callback_data="show_itunes_services")]
             ]
             query.edit_message_text("رصيدك ليس كافياً.", reply_markup=InlineKeyboardMarkup(buttons))
@@ -927,6 +933,8 @@ def button_handler(update: Update, context: CallbackContext):
                 [InlineKeyboardButton("شحن عبر سوبركي", callback_data="charge_superkey")],
                 [InlineKeyboardButton("شحن عبر زين كاش", callback_data="charge_zaincash")],
                 [InlineKeyboardButton("شحن عبر USDT", callback_data="charge_usdt")],
+                [InlineKeyboardButton("شحن عبر نقاط سنتات", callback_data="charge_cent_points")],
+                [InlineKeyboardButton("شحن عبر هلابي", callback_data="charge_helabi")],
                 [InlineKeyboardButton("رجوع", callback_data="show_telegram_services")]
             ]
             query.edit_message_text("رصيدك ليس كافياً.", reply_markup=InlineKeyboardMarkup(buttons))
@@ -953,6 +961,8 @@ def button_handler(update: Update, context: CallbackContext):
             [InlineKeyboardButton("شحن عبر سوبركي", callback_data="charge_superkey")],
             [InlineKeyboardButton("شحن عبر زين كاش", callback_data="charge_zaincash")],
             [InlineKeyboardButton("شحن عبر USDT", callback_data="charge_usdt")],
+            [InlineKeyboardButton("شحن عبر نقاط سنتات", callback_data="charge_cent_points")],
+            [InlineKeyboardButton("شحن عبر هلابي", callback_data="charge_helabi")],
             [InlineKeyboardButton("رجوع", callback_data="back_main")]
         ]
         query.edit_message_text(f"رصيدك الحالي: {balance}$", reply_markup=InlineKeyboardMarkup(buttons))
@@ -964,8 +974,8 @@ def button_handler(update: Update, context: CallbackContext):
         query.edit_message_text("أرسل رقم الكارت المكون من 14 أو 16 رقم (يمكنك لصقه كما هو):")
         return
 
-    # طرق أخرى
-    if data in ("charge_superkey", "charge_zaincash", "charge_usdt"):
+    # شحن عبر طرق أخرى (سوبركي / زين كاش / USDT / نقاط سنتات / هلابي): رسالة دعم
+    if data in ("charge_superkey", "charge_zaincash", "charge_usdt", "charge_cent_points", "charge_helabi"):
         msg = f"لإتمام عملية الشحن تواصل مع الدعم الفني عبر الضغط هنا👈🏻 {SUPPORT_CONTACT}"
         query.edit_message_text(
             msg,
