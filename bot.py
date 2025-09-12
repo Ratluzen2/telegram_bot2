@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-بوت تلغرام متكامل + إدارة المشرفين + خصومات للمشرف + إصلاح الإشعارات والأزرار
+بوت تلغرام متكامل + إدارة المشرفين + خصومات للمشرف + إصلاح الشحن عبر آسياسيل
 - متوافق مع python-telegram-bot v13.x
 - استبدل ADMIN_ID و TOKEN بقيمك قبل التشغيل
 """
@@ -17,7 +17,6 @@ from telegram import (
     Update,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    ReplyKeyboardRemove
 )
 from telegram.ext import (
     Updater,
@@ -40,7 +39,7 @@ logger = logging.getLogger("TG_BOT")
 # =========================
 # إعداد المتغيرات العامة
 # =========================
-ADMIN_ID = 7655504656               # ← غيّر آيدي المالك
+ADMIN_ID = 1234567890               # ← غيّر آيدي المالك
 TOKEN = "8138615524:AAFr6m5Z4_gY0k7pdg7teD9nM8ReDC-KQKU"   # ← ضع توكن البوت هنا (لا تنشره علنًا)
 API_KEY = "3e4f5503764fa06793da9a76d24d65a4"
 API_URL = "https://kd1s.com/api/v2"
@@ -342,6 +341,7 @@ def main_menu_keyboard(user_id: int):
     ])
 
 def admin_menu_keyboard():
+    # تمت إزالة الزر الزائد "تنفيذ الطلبات المعلقة API" لإرجاع اللوحة كما كانت أقرب للأصل
     buttons = [
         [InlineKeyboardButton("إدارة المشرفين", callback_data="manage_mods")],
         [InlineKeyboardButton("حضر المستخدم", callback_data="block_user"),
@@ -351,11 +351,10 @@ def admin_menu_keyboard():
         [InlineKeyboardButton("عدد المستخدمين", callback_data="admin_users_count"),
          InlineKeyboardButton("رصيد المستخدمين", callback_data="admin_users_balance")],
         [InlineKeyboardButton("مراجعة الطلبات (API مكتملة)", callback_data="review_orders"),
-         InlineKeyboardButton("تنفيذ الطلبات المعلقة API", callback_data="admin_pending_orders")],
-        [InlineKeyboardButton("الكارتات المعلقة", callback_data="pending_cards"),
-         InlineKeyboardButton("طلبات شدات ببجي", callback_data="pending_pubg_orders")],
-        [InlineKeyboardButton("طلبات شحن الايتونز", callback_data="pending_itunes_orders"),
-         InlineKeyboardButton("اعلان البوت", callback_data="admin_announce")],
+         InlineKeyboardButton("الكارتات المعلقة", callback_data="pending_cards")],
+        [InlineKeyboardButton("طلبات شدات ببجي", callback_data="pending_pubg_orders"),
+         InlineKeyboardButton("طلبات شحن الايتونز", callback_data="pending_itunes_orders")],
+        [InlineKeyboardButton("اعلان البوت", callback_data="admin_announce")],
         [InlineKeyboardButton("فحص رصيد API", callback_data="api_check_balance"),
          InlineKeyboardButton("فحص حالة طلب API", callback_data="api_order_status")],
         [InlineKeyboardButton("رجوع", callback_data="back_main")]
@@ -381,8 +380,7 @@ def tiktok_score_keyboard(user_id: int):
     service_buttons = []
     for service_name, price in score_services.items():
         eff = get_effective_price(user_id, service_name, price, "generic")
-        btn_text = f"{service_name} - {eff}$"
-        service_buttons.append([InlineKeyboardButton(btn_text, callback_data=f"service_{service_name}")])
+        service_buttons.append([InlineKeyboardButton(f"{service_name} - {eff}$", callback_data=f"service_{service_name}")])
     service_buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
     return InlineKeyboardMarkup(service_buttons)
 
@@ -390,8 +388,7 @@ def itunes_services_keyboard(user_id: int):
     buttons = []
     for service_name, price in itunes_services.items():
         eff = get_effective_price(user_id, service_name, price, "itunes")
-        btn_text = f"{service_name} - {eff}$"
-        buttons.append([InlineKeyboardButton(btn_text, callback_data=f"itunes_service_{service_name}")])
+        buttons.append([InlineKeyboardButton(f"{service_name} - {eff}$", callback_data=f"itunes_service_{service_name}")])
     buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
     return InlineKeyboardMarkup(buttons)
 
@@ -399,8 +396,7 @@ def telegram_services_keyboard(user_id: int):
     buttons = []
     for service_name, price in telegram_services.items():
         eff = get_effective_price(user_id, service_name, price, "telegram")
-        btn_text = f"{service_name} - {eff}$"
-        buttons.append([InlineKeyboardButton(btn_text, callback_data=f"telegram_service_{service_name}")])
+        buttons.append([InlineKeyboardButton(f"{service_name} - {eff}$", callback_data=f"telegram_service_{service_name}")])
     buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
     return InlineKeyboardMarkup(buttons)
 
@@ -410,7 +406,7 @@ def clear_all_waiting_flags(context: CallbackContext):
         "waiting_for_add_balance_amount", "waiting_for_discount_user_id", "waiting_for_discount_amount",
         "waiting_for_broadcast", "waiting_for_api_order_status", "selected_service", "service_price",
         "selected_pubg_service", "pubg_service_price", "card_to_approve", "card_to_approve_index", "waiting_for_amount",
-        "selected_itunes_service", "itunes_service_price", "waiting_for_itunes_confirm", "itunes_temp_choice",
+        "selected_itunes_service", "itunes_service_price", "waiting_for_itunes_confirm",
         "waiting_for_itunes_code", "itunes_to_complete", "itunes_to_complete_index",
         "selected_telegram_service", "telegram_service_price", "waiting_for_telegram_link",
         "waiting_for_new_mod", "waiting_for_remove_mod"
@@ -525,13 +521,12 @@ def approve_order_process(order_index: int, context: CallbackContext, query):
 
     if order_info['service'] in service_api_mapping:
         mapping = service_api_mapping[order_info['service']]
-        quantity = mapping['quantity_multiplier']
         params = {
             'key': API_KEY,
             'action': 'add',
             'service': mapping['service_id'],
             'link': order_info['link'],
-            'quantity': quantity
+            'quantity': mapping['quantity_multiplier']
         }
         try:
             response = requests.post(API_URL, data=params, timeout=25)
@@ -549,21 +544,14 @@ def approve_order_process(order_index: int, context: CallbackContext, query):
                 chat_id=order_info['user_id'],
                 text=f"تم استلام طلبك وسوف يتم تنفيذه قريباً\nرقم طلبك ({api_response['order']})"
             )
-            query.edit_message_text(
-                "تم تنفيذ الطلب عبر API وإشعار المستخدم.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_pending_orders")]])
-            )
+            query.edit_message_text("تم تنفيذ الطلب عبر API وإشعار المستخدم.",
+                                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_menu")]]))
         else:
             users_balance[order_info['user_id']] = users_balance.get(order_info['user_id'], 0.0) + order_info['price']
             sync_balance_to_db(order_info['user_id'])
-            context.bot.send_message(
-                chat_id=order_info['user_id'],
-                text="فشل تنفيذ الطلب عبر النظام الخارجي، تمت إعادة المبلغ لرصيدك."
-            )
-            query.edit_message_text(
-                "فشل تنفيذ الطلب عبر API وتمت إعادة الرصيد للمستخدم.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_pending_orders")]])
-            )
+            context.bot.send_message(chat_id=order_info['user_id'], text="فشل تنفيذ الطلب عبر النظام الخارجي، تمت إعادة المبلغ لرصيدك.")
+            query.edit_message_text("فشل تنفيذ الطلب عبر API وتمت إعادة الرصيد للمستخدم.",
+                                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_menu")]]))
     else:
         order_info["order_number"] = "N/A"
         order_info["service_number"] = "N/A"
@@ -571,7 +559,8 @@ def approve_order_process(order_index: int, context: CallbackContext, query):
         order_info["completed_at"] = time.time()
         completed_orders.append(order_info)
         context.bot.send_message(chat_id=order_info['user_id'], text="تم إكمال طلبك بنجاح.")
-        query.edit_message_text("تم تأكيد الطلب وإشعار المستخدم.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_pending_orders")]]))
+        query.edit_message_text("تم تأكيد الطلب وإشعار المستخدم.",
+                                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_menu")]]))
 
 # =========================
 # أزرار (Callback) الهاندلر
@@ -776,7 +765,7 @@ def button_handler(update: Update, context: CallbackContext):
     # شحن عبر اسياسيل
     if data == "charge_asiacell":
         context.user_data["waiting_for_card"] = True
-        query.edit_message_text("أرسل رقم الكارت المكون من 14 رقم أو 16 رقم:")
+        query.edit_message_text("أرسل رقم الكارت المكون من 14 أو 16 رقم (يمكنك لصقه كما هو):")
         return
 
     # ========== لوحة المالك ==========
@@ -945,7 +934,8 @@ def button_handler(update: Update, context: CallbackContext):
         if data.startswith("approve_card_"):
             card_index = int(data.split("_")[-1])
             card_info = pending_cards[card_index]
-            query.edit_message_text("أرسل الآن المبلغ المراد شحنه للمستخدم:", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="pending_cards")]]))
+            query.edit_message_text("أرسل الآن المبلغ المراد شحنه للمستخدم (بالدولار):",
+                                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="pending_cards")]]))
             context.user_data["card_to_approve"] = card_info
             context.user_data["card_to_approve_index"] = card_index
             context.user_data["waiting_for_amount"] = True
@@ -1118,25 +1108,6 @@ def button_handler(update: Update, context: CallbackContext):
             for i, (mid, fn, un) in enumerate(mods, start=1):
                 txt += f"{i}) {fn} (@{un}) - ID: {mid}\n"
             query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="manage_mods")]]))
-            return
-
-        # تنفيذ الطلبات المعلقة عبر API
-        if data == "admin_pending_orders":
-            if not pending_orders:
-                query.edit_message_text("لا توجد طلبات معلّقة حالياً.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_menu")]]))
-            else:
-                text_msg = "الطلبات المعلقة:\n"
-                kb = []
-                for idx, o in enumerate(pending_orders):
-                    text_msg += f"{idx+1}) {o['full_name']} | {o['service']} | {o['price']}$\n"
-                    kb.append([InlineKeyboardButton(f"تنفيذ عبر API #{idx+1}", callback_data=f"approve_api_{idx}")])
-                kb.append([InlineKeyboardButton("رجوع", callback_data="admin_menu")])
-                query.edit_message_text(text_msg, reply_markup=InlineKeyboardMarkup(kb))
-            return
-
-        if data.startswith("approve_api_"):
-            order_index = int(data.split("_")[-1])
-            approve_order_process(order_index, context, query)
             return
 
     # ========== لوحة المشرف ==========
@@ -1332,7 +1303,6 @@ def handle_messages(update: Update, context: CallbackContext):
         return
 
     if user_id == ADMIN_ID and context.user_data.get("waiting_for_broadcast"):
-        # يدعم نص + صور + فيديو + فويس (لأننا نضيف هاندلر للوسائط أيضاً)
         broadcast_ad(update, context)
         clear_all_waiting_flags(context)
         return
@@ -1353,13 +1323,13 @@ def handle_messages(update: Update, context: CallbackContext):
         context.user_data["waiting_for_new_mod"] = False
         target_id = None
         target_username = None
-        full_name = "Unknown"
+        full_name_db = "Unknown"
 
         if text.isdigit():
             target_id = int(text)
             row = get_user_from_db(target_id)
             if row:
-                full_name = row[1]
+                full_name_db = row[1]
                 target_username = row[2] or "NoUsername"
         else:
             target_username = _normalize_username(text)
@@ -1370,17 +1340,17 @@ def handle_messages(update: Update, context: CallbackContext):
                     break
             if row_match:
                 target_id = row_match[0]
-                full_name = row_match[1]
+                full_name_db = row_match[1]
             else:
                 update.message.reply_text("تعذر إيجاد المستخدم بهذا اليوزر في قاعدة البيانات. أرسل الآيدي الرقمي للمستخدم.")
                 return
 
-        add_moderator(target_id, full_name, target_username or "NoUsername")
+        add_moderator(target_id, full_name_db, target_username or "NoUsername")
         try:
             context.bot.send_message(chat_id=target_id, text="✅ تم ترقيتك إلى مشرف. أرسل /start لتظهر لك لوحة تحكم المشرف.")
         except Exception as e:
             logger.warning("Could not DM new moderator: %s", e)
-        update.message.reply_text(f"تمت إضافة المشرف: {full_name} (@{target_username}) - ID: {target_id}")
+        update.message.reply_text(f"تمت إضافة المشرف: {full_name_db} (@{target_username}) - ID: {target_id}")
         return
 
     if user_id == ADMIN_ID and context.user_data.get("waiting_for_remove_mod"):
@@ -1392,7 +1362,81 @@ def handle_messages(update: Update, context: CallbackContext):
             update.message.reply_text("لم يتم العثور على المشرف المحدد.")
         return
 
-    # --- أوضاع المستخدم/المشرف ---
+    # ======== منطق الشحن عبر آسياسيل (المستخدم) + إشعار المالك فورًا ========
+    if context.user_data.get("waiting_for_card"):
+        raw = text.strip()
+        digits = "".join(ch for ch in raw if ch.isdigit())
+        if len(digits) not in (14, 16):
+            update.message.reply_text("❌ رقم الكارت غير صحيح. الرجاء إرسال رقم مكوّن من 14 أو 16 رقم.")
+            return
+
+        card_number_display = f"{digits[:4]}-{digits[4:8]}-{digits[8:12]}-{digits[12:]}" if len(digits) == 16 else digits
+
+        pending_cards.append({
+            "user_id": user_id,
+            "full_name": full_name,
+            "username": username,
+            "card_number": digits,
+            "submitted_at": time.time()
+        })
+
+        # إشعار المالك فورًا مع زر يفتح قائمة الكروت المعلقة
+        try:
+            context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=(
+                    "💳 تم استلام كارت آسياسيل جديد للمراجعة:\n"
+                    f"- المستخدم: {full_name} (@{username})\n"
+                    f"- ID: {user_id}\n"
+                    f"- الكارت: {card_number_display}\n\n"
+                    "اضغط الزر أدناه لعرض جميع الكروت المعلقة."
+                ),
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("الكارتات المعلقة", callback_data="pending_cards")]])
+            )
+        except Exception as e:
+            logger.error("Failed to notify owner about new card: %s", e)
+
+        update.message.reply_text("✅ تم إرسال رقم الكارت للمراجعة.\nسيقوم المالك بالتحقق والشحن إن أمكن.", reply_markup=main_menu_keyboard(user_id))
+        clear_all_waiting_flags(context)
+        return
+
+    # ======== إدخال مبلغ الشحن عند موافقة المالك (كان ناقص وتمت إضافته) ========
+    if user_id == ADMIN_ID and context.user_data.get("waiting_for_amount"):
+        try:
+            amount = float(text.strip())
+        except ValueError:
+            update.message.reply_text("الرجاء إرسال مبلغ صالح.")
+            return
+
+        card_info = context.user_data.get("card_to_approve")
+        card_index = context.user_data.get("card_to_approve_index")
+
+        if card_info is None or card_index is None or not (0 <= card_index < len(pending_cards)):
+            update.message.reply_text("تعذر العثور على الكارت المحدد.")
+            clear_all_waiting_flags(context)
+            return
+
+        target_id = card_info["user_id"]
+        users_balance[target_id] = users_balance.get(target_id, 0.0) + amount
+        sync_balance_to_db(target_id)
+
+        # إزالة الكارت من القائمة
+        try:
+            pending_cards.pop(card_index)
+        except Exception:
+            pass
+
+        # إشعار المستخدم
+        try:
+            context.bot.send_message(chat_id=target_id, text=f"🎉 تم شحن رصيدك بقيمة {amount}$.")
+        except Exception as e:
+            logger.error("Failed to notify user about topup: %s", e)
+
+        update.message.reply_text(f"تم شحن رصيد المستخدم {card_info['full_name']} (@{card_info['username']}) بمبلغ {amount}$.")
+        clear_all_waiting_flags(context)
+        return
+
+    # --- أوضاع المستخدم/المشرف (طلبات الخدمات) ---
     if context.user_data.get("selected_service"):
         service_name = context.user_data.get("selected_service")
         price = float(context.user_data.get("service_price", 0))
@@ -1526,19 +1570,6 @@ def handle_messages(update: Update, context: CallbackContext):
         clear_all_waiting_flags(context)
         return
 
-    if context.user_data.get("waiting_for_card"):
-        card_number = text.strip()
-        pending_cards.append({
-            "user_id": user_id,
-            "full_name": full_name,
-            "username": username,
-            "card_number": card_number,
-            "submitted_at": time.time()
-        })
-        update.message.reply_text("✅ تم إرسال رقم الكارت للمراجعة.\nسيقوم المالك بالتحقق والشحن إن أمكن.", reply_markup=main_menu_keyboard(user_id))
-        clear_all_waiting_flags(context)
-        return
-
     update.message.reply_text("اختر من القائمة:", reply_markup=main_menu_keyboard(user_id))
 
 # =========================
@@ -1561,7 +1592,7 @@ def main():
     # أزرار
     dp.add_handler(CallbackQueryHandler(button_handler))
 
-    # رسائل (نص + وسائط) — إصلاح بثّ الإعلان للصور/الفيديو/الفويس
+    # رسائل (نص + وسائط) — للبث والإدخالات المختلفة
     dp.add_handler(MessageHandler((Filters.text | Filters.photo | Filters.video | Filters.voice) & ~Filters.command, handle_messages))
 
     # بدء التشغيل
