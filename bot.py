@@ -814,7 +814,7 @@ def button_handler(update: Update, context: CallbackContext):
             buttons = [
                 [InlineKeyboardButton("شحن عبر اسياسيل", callback_data="charge_asiacell")],
                 [InlineKeyboardButton("شحن عبر سوبركي", callback_data="charge_superkey")],
-                [InlineKeyboardButton("شحن عبر زين كاش", callback_data="charge_zaincash")],
+                [InlineKeyboardButton("شحن عبر زين كاش", callback_data="charge_zينcash")],
                 [InlineKeyboardButton("شحن عبر USDT", callback_data="charge_usdt")],
                 [InlineKeyboardButton("رجوع", callback_data="show_telegram_services")]
             ]
