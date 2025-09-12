@@ -3,11 +3,11 @@
 """
 بوت تلغرام متكامل (python-telegram-bot v13.x)
 - إدارة المشرفين + خصومات للمشرف
-- إصلاح شحن آسياسيل مع إشعار فوري للمالك
+- إصلاح شحن آسياسيل مع إشعار فوري للمالك + حماية (تكرار/سبام) مع حظر مؤقت
 - زر "الطلبات المعلّقة (الخدمات)" لاعتماد/رفض الطلبات وتنفيذ الـ API
+- المتصدرين🎉: عرض أعلى 10 إنفاقًا مع الجوائز (موجود للمستخدم/المشرف في الرئيسية، وللمالك داخل لوحته)
+- طرق شحن إضافية: نقاط سنتات / هلابي (نفس رسالة الدعم)
 - قراءة الإعدادات من متغيّرات البيئة (Heroku Config Vars) أو القيم الافتراضية
-- ميزة الحماية: حظر ساعتين عند تكرار نفس كارت آسياسيل > 2 أو سبام كروت خلال وقت قصير
-- المتصدرين🎉: عرض أعلى 10 إنفاقًا مع الجوائز
 """
 
 import logging
@@ -43,8 +43,8 @@ logger = logging.getLogger("TG_BOT")
 # =========================
 # الإعدادات (Environment)
 # =========================
-ADMIN_ID = int(os.getenv("ADMIN_ID", "7655504656"))   # مثال: 7655504656
-TOKEN = os.getenv("TOKEN", "8138615524:AAFr6m5Z4_gY0k7pdg7teD9nM8ReDC-KQKU")  # مثال: "123456:AA...."
+ADMIN_ID = int(os.getenv("ADMIN_ID", "7655504656"))
+TOKEN = os.getenv("TOKEN", "8138:dummy_token_change_me")
 API_KEY = os.getenv("API_KEY", "25a9ceb07be0d8b2ba88e70dcbe92e06")
 API_URL = os.getenv("API_URL", "https://kd1s.com/api/v2")
 SUPPORT_CONTACT = os.getenv("SUPPORT_CONTACT", "@z396r")  # لدعم طرق الشحن الإضافية
@@ -55,40 +55,50 @@ if not TOKEN or ":" not in TOKEN:
 # =========================
 # تعريف القواميس الخاصة بالخدمات
 # =========================
+# خريطة الخدمات التي تُنفّذ عبر API (بما فيها رفع سكور تيكتوك)
 service_api_mapping = {
     "متابعين تيكتوك 1k": {"service_id": 13912, "quantity_multiplier": 1000},
     "متابعين تيكتوك 2k": {"service_id": 13912, "quantity_multiplier": 2000},
     "متابعين تيكتوك 3k": {"service_id": 13912, "quantity_multiplier": 3000},
     "متابعين تيكتوك 4k": {"service_id": 13912, "quantity_multiplier": 4000},
+
     "مشاهدات تيكتوك 1k": {"service_id": 9447, "quantity_multiplier": 1000},
     "مشاهدات تيكتوك 10k": {"service_id": 9543, "quantity_multiplier": 10000},
     "مشاهدات تيكتوك 20k": {"service_id": 9543, "quantity_multiplier": 20000},
     "مشاهدات تيكتوك 30k": {"service_id": 9543, "quantity_multiplier": 30000},
     "مشاهدات تيكتوك 50k": {"service_id": 9543, "quantity_multiplier": 50000},
+
     "متابعين انستغرام 1k": {"service_id": 13788, "quantity_multiplier": 1000},
     "متابعين انستغرام 2k": {"service_id": 13788, "quantity_multiplier": 2000},
     "متابعين انستغرام 3k": {"service_id": 13788, "quantity_multiplier": 3000},
     "متابعين انستغرام 4k": {"service_id": 13788, "quantity_multiplier": 4000},
+
     "لايكات تيكتوك 1k": {"service_id": 12320, "quantity_multiplier": 1000},
     "لايكات تيكتوك 2k": {"service_id": 12320, "quantity_multiplier": 2000},
     "لايكات تيكتوك 3k": {"service_id": 12320, "quantity_multiplier": 3000},
     "لايكات تيكتوك 4k": {"service_id": 12320, "quantity_multiplier": 4000},
+
     "لايكات انستغرام 1k": {"service_id": 7973, "quantity_multiplier": 1000},
     "لايكات انستغرام 2k": {"service_id": 7973, "quantity_multiplier": 2000},
     "لايكات انستغرام 3k": {"service_id": 7973, "quantity_multiplier": 3000},
     "لايكات انستغرام 4k": {"service_id": 7973, "quantity_multiplier": 4000},
+
     "مشاهدات انستغرام 10k": {"service_id": 13531, "quantity_multiplier": 10000},
     "مشاهدات انستغرام 20k": {"service_id": 13531, "quantity_multiplier": 20000},
     "مشاهدات انستغرام 30k": {"service_id": 13531, "quantity_multiplier": 30000},
     "مشاهدات انستغرام 50k": {"service_id": 13531, "quantity_multiplier": 50000},
+
     "مشاهدات بث تيكتوك 1k": {"service_id": 13259, "quantity_multiplier": 1000},
     "مشاهدات بث تيكتوك 2k": {"service_id": 13259, "quantity_multiplier": 2000},
     "مشاهدات بث تيكتوك 3k": {"service_id": 13259, "quantity_multiplier": 3000},
     "مشاهدات بث تيكتوك 4k": {"service_id": 13259, "quantity_multiplier": 4000},
+
     "مشاهدات بث انستغرام 1k": {"service_id": 12595, "quantity_multiplier": 1000},
     "مشاهدات بث انستغرام 2k": {"service_id": 12595, "quantity_multiplier": 2000},
     "مشاهدات بث انستغرام 3k": {"service_id": 12595, "quantity_multiplier": 3000},
     "مشاهدات بث انستغرام 4k": {"service_id": 12595, "quantity_multiplier": 4000},
+
+    # ====== إصلاح سكور تيكتوك: تأكيد الخدمات والـ service_id ======
     "نقاط تحديات تيك توك جديدة | سكور 🎯": {"service_id": 13125, "quantity_multiplier": 1000},
     "رفع سكور بثك1k": {"service_id": 13125, "quantity_multiplier": 1000},
     "رفع سكور بثك2k": {"service_id": 13125, "quantity_multiplier": 2000},
@@ -102,36 +112,45 @@ services_dict = {
     "متابعين تيكتوك 2k": 7,
     "متابعين تيكتوك 3k": 10.50,
     "متابعين تيكتوك 4k": 14,
-    "مشاهدات تيكتوك 1k": 0.1,
+
+    "مشاهدات تيكتوك 1k": 0.10,
     "مشاهدات تيكتوك 10k": 0.80,
     "مشاهدات تيكتوك 20k": 1.60,
     "مشاهدات تيكتوك 30k": 2.40,
     "مشاهدات تيكتوك 50k": 3.20,
+
     "متابعين انستغرام 1k": 3,
     "متابعين انستغرام 2k": 6,
     "متابعين انستغرام 3k": 9,
     "متابعين انستغرام 4k": 12,
+
     "لايكات تيكتوك 1k": 1,
     "لايكات تيكتوك 2k": 2,
     "لايكات تيكتوك 3k": 3,
     "لايكات تيكتوك 4k": 4,
+
     "لايكات انستغرام 1k": 1,
     "لايكات انستغرام 2k": 2,
     "لايكات انستغرام 3k": 3,
     "لايكات انستغرام 4k": 4,
+
     "مشاهدات انستغرام 10k": 0.80,
     "مشاهدات انستغرام 20k": 1.60,
     "مشاهدات انستغرام 30k": 2.40,
     "مشاهدات انستغرام 50k": 3.20,
+
     "مشاهدات بث تيكتوك 1k": 2,
     "مشاهدات بث تيكتوك 2k": 4,
     "مشاهدات بث تيكتوك 3k": 6,
     "مشاهدات بث تيكتوك 4k": 8,
+
     "مشاهدات بث انستغرام 1k": 2,
     "مشاهدات بث انستغرام 2k": 4,
     "مشاهدات بث انستغرام 3k": 6,
     "مشاهدات بث انستغرام 4k": 8,
-    "نقاط تحديات تيك توك جديدة | سكور 🎯": 0.51,
+
+    # ====== أسعار السكور (تُنفّذ عبر API 13125) ======
+    "نقاط تحديات تيك توك جديدة | سكور 🎯": 0.51,  # لكل 1000 نقطة (quantity_multiplier=1000)
     "رفع سكور بثك1k": 2,
     "رفع سكور بثك2k": 4,
     "رفع سكور بثك3k": 6,
@@ -326,7 +345,6 @@ CREATE TABLE IF NOT EXISTS users (
 _exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS full_name TEXT")
 _exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS username  TEXT")
 _exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS balance   REAL DEFAULT 0")
-# عمود إجمالي الصرف (للمتصدرين)
 _exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS total_spent REAL DEFAULT 0")
 
 _exec("""
@@ -372,10 +390,7 @@ def reduce_user_spent(user_id: int, amount: float):
     """, (amount, user_id))
 
 def get_all_users():
-    return _exec(
-        "SELECT user_id, full_name, username, balance, total_spent FROM users",
-        fetch="all"
-    ) or []
+    return _exec("SELECT user_id, full_name, username, balance, total_spent FROM users", fetch="all") or []
 
 def get_users_with_balance_desc():
     return _exec(
@@ -453,12 +468,12 @@ def get_effective_price(user_id: int, service_name: str, base_price: float, kind
             return round(float(base_price) * 0.90, 2)
 
         in_80 = (
-            "متابعين" in service_name or
-            "لايكات" in service_name or
-            "مشاهدات بث" in service_name أو
-            "رفع سكور" in service_name or
-            "نقاط تحديات" in service_name or
-            kind == "telegram"
+            ("متابعين" in service_name) or
+            ("لايكات" in service_name) or
+            ("مشاهدات بث" in service_name) or
+            ("رفع سكور" in service_name) or
+            ("نقاط تحديات" in service_name) or
+            (kind == "telegram")
         )
         if in_80:
             return round(float(base_price) * 0.80, 2)
@@ -472,11 +487,12 @@ def get_effective_price(user_id: int, service_name: str, base_price: float, kind
 # لوحات المفاتيح (Keyboards)
 # =========================
 def main_menu_keyboard(user_id: int):
-    # ✅ طلبك: إزالة "المتصدرين🎉" من القائمة الرئيسية للمالك فقط
+    # المالك: بدون زر المتصدرين في الرئيسية
     if user_id == ADMIN_ID:
         return InlineKeyboardMarkup([
             [InlineKeyboardButton("لوحة تحكم المالك", callback_data="admin_menu")]
         ])
+    # المشرف
     if is_moderator(user_id):
         return InlineKeyboardMarkup([
             [InlineKeyboardButton("الخدمات", callback_data="show_services")],
@@ -484,6 +500,7 @@ def main_menu_keyboard(user_id: int):
             [InlineKeyboardButton("لوحة تحكم المشرف", callback_data="moderator_menu")],
             [InlineKeyboardButton("المتصدرين🎉", callback_data="show_leaderboard")]
         ])
+    # المستخدم العادي
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("الخدمات", callback_data="show_services")],
         [InlineKeyboardButton("رصيدي", callback_data="show_balance")],
@@ -527,6 +544,7 @@ def services_menu_keyboard():
     return InlineKeyboardMarkup(buttons)
 
 def tiktok_score_keyboard(user_id: int):
+    # يظهر كل خدمات السكور المحددة أعلاه مع خصم المشرف إن وجد
     score_services = {k: v for k, v in services_dict.items() if ("رفع سكور" in k or "نقاط تحديات" in k)}
     service_buttons = []
     for service_name, price in score_services.items():
@@ -727,6 +745,7 @@ def button_handler(update: Update, context: CallbackContext):
     data = query.data
     query.answer()
 
+    # منع تشابك حالات قديمة
     clear_all_waiting_flags(context)
 
     ban_msg = _is_user_blocked_now(user_id)
@@ -808,6 +827,7 @@ def button_handler(update: Update, context: CallbackContext):
         return
 
     if data == "show_tiktok_score":
+        # قائمة خدمات السكور
         query.edit_message_text("اختر خدمة رفع سكور تيكتوك المطلوبة:", reply_markup=tiktok_score_keyboard(user_id))
         return
 
@@ -828,7 +848,7 @@ def button_handler(update: Update, context: CallbackContext):
         query.edit_message_text("اختر خدمة شحن شدات ببجي:", reply_markup=InlineKeyboardMarkup(service_buttons))
         return
 
-    # اختيار خدمة عامة
+    # اختيار خدمة عامة (تشمل السكور)
     if data.startswith("service_"):
         service_name = data[len("service_"):]
         base_price = services_dict.get(service_name)
@@ -850,6 +870,7 @@ def button_handler(update: Update, context: CallbackContext):
             query.edit_message_text("رصيدك ليس كافياً.", reply_markup=InlineKeyboardMarkup(buttons))
             return
 
+        # رسائل توجيه حسب نوع الخدمة
         if "انستغرام" in service_name:
             message_text = (
                 "الرجاء إرسال رابط الخدمة الخاص بك\n"
@@ -858,20 +879,25 @@ def button_handler(update: Update, context: CallbackContext):
             )
         elif "رفع سكور بث" in service_name:
             message_text = (
-                "يرجى ارسال رابط البث الخاص بك\n"
-                "🔴تنبيه: يرجى ارسال رابط البث وليس اليوزرنيم!!"
+                "يرجى ارسال رابط البث المباشر الخاص بك على تيكتوك.\n"
+                "🔴 تنبيه: أرسل <b>رابط البث</b> وليس اليوزرنيم."
+            )
+        elif "نقاط تحديات" in service_name:
+            message_text = (
+                "أرسل رابط حساب/منشور تيكتوك المطلوب احتسابه لنقاط التحديات حسب متطلبات المزود.\n"
+                "يفضَّل إرسال الرابط الكامل للتأكد من تنفيذ الطلب بشكل صحيح."
             )
         elif "تيكتوك" in service_name:
             message_text = (
                 "الرجاء إرسال الرابط الخاص بالخدمة المطلوبة:\n"
-                "🔴ملاحظة: ارسل الرابط وليس اليوزرنيم!"
+                "🔴 ملاحظة: أرسل <b>الرابط</b> وليس اليوزرنيم!"
             )
         else:
             message_text = "الرجاء إرسال الرابط الخاص بالخدمة المطلوبة:"
 
         context.user_data["selected_service"] = service_name
         context.user_data["service_price"] = price
-        query.edit_message_text(message_text)
+        query.edit_message_text(message_text, parse_mode="HTML")
         return
 
     # اختيار خدمة ببجي
@@ -1106,7 +1132,7 @@ def button_handler(update: Update, context: CallbackContext):
             query.edit_message_text(text_msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_menu")]]))
             return
 
-        # الطلبات المكتملة عبر API — إضافة زر حذف الطلب
+        # الطلبات المكتملة عبر API — مع زر حذف الطلب
         if data == "review_orders":
             filtered = [(i, o) for i, o in enumerate(completed_orders) if o.get("order_number", "N/A") != "N/A"]
             if not filtered:
@@ -1157,17 +1183,14 @@ def button_handler(update: Update, context: CallbackContext):
             query.edit_message_text("تمت العملية.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_menu")]]))
             return
 
-        # ✅ زر حذف الطلب من القائمة المكتملة
         if data.startswith("delete_order_"):
             try:
                 order_index = int(data.split("_")[-1])
-                # لا نعيد الرصيد هنا، مجرد تنظيف
                 completed_orders.pop(order_index)
             except Exception:
                 query.answer("تعذر حذف هذا الطلب.", show_alert=True)
                 return
-            query.answer("تم حذف الطلب.", show_alert=True)
-            # إعادة فتح القائمة بعد الحذف
+            # إعادة عرض القائمة بعد الحذف
             query.data = "review_orders"
             button_handler(update, context)
             return
@@ -1673,6 +1696,7 @@ def handle_messages(update: Update, context: CallbackContext):
             "submitted_at": time.time()
         })
 
+        # إشعار المالك فورًا
         try:
             context.bot.send_message(
                 chat_id=ADMIN_ID,
@@ -1751,6 +1775,7 @@ def handle_messages(update: Update, context: CallbackContext):
             "ordered_at": time.time()
         })
 
+        # إشعار المالك بوجود طلب خدمة جديد
         try:
             context.bot.send_message(
                 chat_id=ADMIN_ID,
@@ -1872,6 +1897,7 @@ def handle_messages(update: Update, context: CallbackContext):
             "ordered_at": time.time()
         })
 
+        # إشعار المالك
         try:
             context.bot.send_message(
                 chat_id=ADMIN_ID,
@@ -1901,11 +1927,17 @@ def main():
     updater = Updater(TOKEN, use_context=True)
     dp = updater.dispatcher
 
+    # أوامر
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(CommandHandler("help", help_cmd))
+
+    # أزرار
     dp.add_handler(CallbackQueryHandler(button_handler))
+
+    # رسائل (نص + وسائط) — للبث والإدخالات المختلفة
     dp.add_handler(MessageHandler((Filters.text | Filters.photo | Filters.video | Filters.voice) & ~Filters.command, handle_messages))
 
+    # بدء التشغيل
     updater.start_polling()
     updater.idle()
 
