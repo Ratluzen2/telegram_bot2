@@ -40,9 +40,9 @@ logger = logging.getLogger("TG_BOT")
 # إعداد المتغيرات العامة
 # =========================
 ADMIN_ID = 7655504656               # ← غيّر آيدي المالك
-TOKEN = "TOKEN"   # ← ضع توكن البوت هنا (لا تنشره علنًا)
-API_KEY = "API_KEY"
-API_URL = "API_URL"
+TOKEN = "8138615524:AAFr6m5Z4_gY0k7pdg7teD9nM8ReDC-KQKU"   # ← ضع توكن البوت هنا (لا تنشره علنًا)
+API_KEY = "25a9ceb07be0d8b2ba88e70dcbe92e06"
+API_URL = "https://kd1s.com/api/v2"
 
 # =========================
 # تعريف القواميس الخاصة بالخدمات
