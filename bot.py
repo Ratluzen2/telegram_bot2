@@ -44,6 +44,7 @@ ADMIN_ID = int(os.getenv("ADMIN_ID", "7655504656"))   # مثال: 7655504656
 TOKEN = os.getenv("TOKEN", "8138615524:AAFr6m5Z4_gY0k7pdg7teD9nM8ReDC-KQKU")  # مثال: "123456:AA...."
 API_KEY = os.getenv("API_KEY", "25a9ceb07be0d8b2ba88e70dcbe92e06")
 API_URL = os.getenv("API_URL", "https://kd1s.com/api/v2")
+SUPPORT_CONTACT = os.getenv("SUPPORT_CONTACT", "@z396r")  # لدعم طرق الشحن الإضافية
 
 if not TOKEN or ":" not in TOKEN:
     logger.warning("⚠️ TOKEN غير مضبوط أو غير صالح. عدّل متغير البيئة TOKEN.")
@@ -186,35 +187,78 @@ blocked_users = {}            # {user_id: True}
 # =========================
 import psycopg
 from psycopg_pool import ConnectionPool
+from urllib.parse import urlparse
 
-DATABASE_URL = os.getenv("DATABASE_URL", "")
+DATABASE_URL = (
+    os.getenv("DATABASE_URL")
+    or os.getenv("NEON_DATABASE_URL")
+    or os.getenv("DATABASE_URL_POOLER")
+    or ""
+)
 if not DATABASE_URL:
-    logger.warning("⚠️ DATABASE_URL غير مضبوط. رجاءً عيّنه من Neon (يفضّل pooler endpoint مع sslmode=require).")
+    logger.error("❌ DATABASE_URL غير مضبوط. عيّن رابط Neon (يفضّل pooler endpoint مع sslmode=require).")
+    raise SystemExit(1)
 
-# ConnectionPool آمن مع تعدد الخيوط في Updater v13
+# تحذير إن لم يكن endpoint الخاص بالـ pooler
+try:
+    _host = urlparse(DATABASE_URL).hostname or ""
+    if "pooler" not in _host:
+        logger.warning("⚠️ يُفضَّل استخدام Pooler endpoint من Neon لعدد اتصالات أقل وثبات أعلى.")
+except Exception:
+    pass
+
+# Pool بإعدادات مهلة أوضح
 pg_pool = ConnectionPool(
     conninfo=DATABASE_URL,
     min_size=1,
-    max_size=10,
-    kwargs={"sslmode": "require"},
+    max_size=5,            # كافي للبوت
+    max_idle=60,           # ثواني
+    timeout=60,            # مهلة استعارة اتصال من الـ pool
+    kwargs={
+        "sslmode": "require",
+        "connect_timeout": 10,  # مهلة إنشاء اتصال فعلي
+    },
 )
 
+def _pool_healthcheck():
+    """نتأكد أن الاتصال يعمل ونطبع السبب الحقيقي لو فشل."""
+    try:
+        pg_pool.wait(timeout=30)  # انتظر تهيئة الـ pool
+        with pg_pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+                cur.fetchone()
+        logger.info("✅ تم الاتصال بقاعدة البيانات بنجاح.")
+    except Exception as e:
+        logger.exception("❌ فشل الاتصال بقاعدة البيانات. تحقق من DATABASE_URL وNeon: %s", e)
+        raise
+
 def _exec(sql: str, params: tuple = (), fetch: str = ""):
-    """تنفيذ الاستعلامات مع الالتزام. fetch: "" | "one" | "all"."""
-    with pg_pool.connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(sql, params)
-            if fetch == "one":
-                row = cur.fetchone()
+    """تنفيذ الاستعلامات مع الالتزام. fetch: '' | 'one' | 'all'."""
+    try:
+        with pg_pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, params)
+                if fetch == "one":
+                    row = cur.fetchone()
+                    conn.commit()
+                    return row
+                if fetch == "all":
+                    rows = cur.fetchall()
+                    conn.commit()
+                    return rows
+                rc = cur.rowcount
                 conn.commit()
-                return row
-            if fetch == "all":
-                rows = cur.fetchall()
-                conn.commit()
-                return rows
-            rc = cur.rowcount
-            conn.commit()
-            return rc
+                return rc
+    except psycopg.OperationalError as e:
+        logger.exception("❌ OperationalError من PostgreSQL: %s", e)
+        raise
+    except Exception as e:
+        logger.exception("❌ DB error: %s", e)
+        raise
+
+# صحّة الاتصال قبل إنشاء الجداول
+_pool_healthcheck()
 
 # إنشاء الجداول (إن لم تكن موجودة) + الأعمدة المطلوبة
 _exec("""
@@ -642,7 +686,7 @@ def button_handler(update: Update, context: CallbackContext):
         return
 
     if data == "show_live_views":
-        live_views_services = {k: v for k, v in services_dict.items() if "مشاهدات بث" in k}
+        live_views_services = {k: v for k, v in services_dict.items() if "مشاهدات بث" في k}
         service_buttons = []
         for name, price in live_views_services.items():
             eff = get_effective_price(user_id, name, price, "generic")
@@ -684,6 +728,9 @@ def button_handler(update: Update, context: CallbackContext):
         if current_balance < price:
             buttons = [
                 [InlineKeyboardButton("شحن عبر اسياسيل", callback_data="charge_asiacell")],
+                [InlineKeyboardButton("شحن عبر سوبركي", callback_data="charge_superkey")],
+                [InlineKeyboardButton("شحن عبر زين كاش", callback_data="charge_zaincash")],
+                [InlineKeyboardButton("شحن عبر USDT", callback_data="charge_usdt")],
                 [InlineKeyboardButton("رجوع", callback_data="show_services")]
             ]
             query.edit_message_text("رصيدك ليس كافياً.", reply_markup=InlineKeyboardMarkup(buttons))
@@ -722,6 +769,9 @@ def button_handler(update: Update, context: CallbackContext):
         if current_balance < price:
             buttons = [
                 [InlineKeyboardButton("شحن عبر اسياسيل", callback_data="charge_asiacell")],
+                [InlineKeyboardButton("شحن عبر سوبركي", callback_data="charge_superkey")],
+                [InlineKeyboardButton("شحن عبر زين كاش", callback_data="charge_zaincash")],
+                [InlineKeyboardButton("شحن عبر USDT", callback_data="charge_usdt")],
                 [InlineKeyboardButton("رجوع", callback_data="show_pubg")]
             ]
             query.edit_message_text("رصيدك ليس كافياً.", reply_markup=InlineKeyboardMarkup(buttons))
@@ -740,6 +790,9 @@ def button_handler(update: Update, context: CallbackContext):
         if current_balance < price:
             buttons = [
                 [InlineKeyboardButton("شحن عبر اسياسيل", callback_data="charge_asiacell")],
+                [InlineKeyboardButton("شحن عبر سوبركي", callback_data="charge_superkey")],
+                [InlineKeyboardButton("شحن عبر زين كاش", callback_data="charge_zaincash")],
+                [InlineKeyboardButton("شحن عبر USDT", callback_data="charge_usdt")],
                 [InlineKeyboardButton("رجوع", callback_data="show_itunes_services")]
             ]
             query.edit_message_text("رصيدك ليس كافياً.", reply_markup=InlineKeyboardMarkup(buttons))
@@ -759,6 +812,9 @@ def button_handler(update: Update, context: CallbackContext):
         if current_balance < price:
             buttons = [
                 [InlineKeyboardButton("شحن عبر اسياسيل", callback_data="charge_asiacell")],
+                [InlineKeyboardButton("شحن عبر سوبركي", callback_data="charge_superkey")],
+                [InlineKeyboardButton("شحن عبر زين كاش", callback_data="charge_zaincash")],
+                [InlineKeyboardButton("شحن عبر USDT", callback_data="charge_usdt")],
                 [InlineKeyboardButton("رجوع", callback_data="show_telegram_services")]
             ]
             query.edit_message_text("رصيدك ليس كافياً.", reply_markup=InlineKeyboardMarkup(buttons))
@@ -782,15 +838,27 @@ def button_handler(update: Update, context: CallbackContext):
         balance = users_balance.get(user_id, 0.0)
         buttons = [
             [InlineKeyboardButton("شحن عبر اسياسيل", callback_data="charge_asiacell")],
+            [InlineKeyboardButton("شحن عبر سوبركي", callback_data="charge_superkey")],
+            [InlineKeyboardButton("شحن عبر زين كاش", callback_data="charge_zaincash")],
+            [InlineKeyboardButton("شحن عبر USDT", callback_data="charge_usdt")],
             [InlineKeyboardButton("رجوع", callback_data="back_main")]
         ]
         query.edit_message_text(f"رصيدك الحالي: {balance}$", reply_markup=InlineKeyboardMarkup(buttons))
         return
 
-    # شحن عبر اسياسيل
+    # شحن عبر آسياسيل (المنطق الأصلي)
     if data == "charge_asiacell":
         context.user_data["waiting_for_card"] = True
         query.edit_message_text("أرسل رقم الكارت المكون من 14 أو 16 رقم (يمكنك لصقه كما هو):")
+        return
+
+    # شحن عبر طرق أخرى (سوبركي / زين كاش / USDT): رسالة توجّه للدعم
+    if data in ("charge_superkey", "charge_zaincash", "charge_usdt"):
+        msg = f"لإتمام عملية الشحن تواصل مع الدعم الفني عبر الضغط هنا👈🏻 {SUPPORT_CONTACT}"
+        query.edit_message_text(
+            msg,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="back_main")]])
+        )
         return
 
     # ========== لوحة المالك ==========
