@@ -99,8 +99,7 @@ service_api_mapping = {
     "مشاهدات بث انستغرام 3k": {"service_id": 12595, "quantity_multiplier": 3000},
     "مشاهدات بث انستغرام 4k": {"service_id": 12595, "quantity_multiplier": 4000},
 
-    # ====== سكور تيكتوك (تم إصلاحه) ======
-    "نقاط تحديات تيك توك جديدة | سكور 🎯": {"service_id": 13125, "quantity_multiplier": 1000},
+    # ====== سكور تيكتوك (بدون خدمة "نقاط تحديات") ======
     "رفع سكور بثك1k": {"service_id": 13125, "quantity_multiplier": 1000},
     "رفع سكور بثك2k": {"service_id": 13125, "quantity_multiplier": 2000},
     "رفع سكور بثك3k": {"service_id": 13125, "quantity_multiplier": 3000},
@@ -150,8 +149,7 @@ services_dict = {
     "مشاهدات بث انستغرام 3k": 6,
     "مشاهدات بث انستغرام 4k": 8,
 
-    # ====== أسعار السكور ======
-    "نقاط تحديات تيك توك جديدة | سكور 🎯": 0.51,
+    # ====== أسعار السكور (بدون "نقاط تحديات") ======
     "رفع سكور بثك1k": 2,
     "رفع سكور بثك2k": 4,
     "رفع سكور بثك3k": 6,
@@ -473,7 +471,6 @@ def get_effective_price(user_id: int, service_name: str, base_price: float, kind
             ("لايكات" in service_name) or
             ("مشاهدات بث" in service_name) or
             ("رفع سكور" in service_name) or
-            ("نقاط تحديات" in service_name) or
             (kind == "telegram")
         )
         if in_80:
@@ -543,13 +540,12 @@ def services_menu_keyboard():
 
 def tiktok_score_keyboard(user_id: int, context: CallbackContext):
     # استخدام callback_data قصيرة لتفادي حد 64 بايت
-    score_services = [(k, v) for k, v in services_dict.items() if ("رفع سكور" in k or "نقاط تحديات" in k)]
+    score_services = [(k, v) for k, v in services_dict.items() if ("رفع سكور" in k)]
     # احفظ الخريطة في سياق المستخدم
     context.user_data["score_map"] = [name for name, _ in score_services]
     service_buttons = []
     for idx, (service_name, price) in enumerate(score_services):
         eff = get_effective_price(user_id, service_name, price, "generic")
-        # callback_data قصيرة
         service_buttons.append([InlineKeyboardButton(f"{service_name} - {eff}$", callback_data=f"score_service_{idx}")])
     service_buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
     return InlineKeyboardMarkup(service_buttons)
@@ -580,7 +576,7 @@ def clear_all_waiting_flags(context: CallbackContext):
         "waiting_for_itunes_code", "itunes_to_complete", "itunes_to_complete_index",
         "selected_telegram_service", "telegram_service_price", "waiting_for_telegram_link",
         "waiting_for_new_mod", "waiting_for_remove_mod", "admin_target_id",
-        "score_map"  # مسح خريطة السكور عند الحاجة
+        "score_map"
     ]
     for key in waiting_keys:
         context.user_data.pop(key, None)
@@ -837,7 +833,7 @@ def button_handler(update: Update, context: CallbackContext):
         except Exception:
             query.edit_message_text("حدث خطأ في اختيار الخدمة.")
             return
-        names = context.user_data.get("score_map") or [k for k in services_dict.keys() if ("رفع سكور" in k or "نقاط تحديات" in k)]
+        names = context.user_data.get("score_map") or [k for k in services_dict.keys() if ("رفع سكور" in k)]
         if idx < 0 or idx >= len(names):
             query.edit_message_text("الخدمة غير موجودة.")
             return
@@ -866,11 +862,6 @@ def button_handler(update: Update, context: CallbackContext):
             message_text = (
                 "يرجى ارسال رابط البث المباشر الخاص بك على تيكتوك.\n"
                 "🔴 تنبيه: أرسل <b>رابط البث</b> وليس اليوزرنيم."
-            )
-        elif "نقاط تحديات" in service_name:
-            message_text = (
-                "أرسل رابط حساب/منشور تيكتوك المطلوب احتسابه لنقاط التحديات حسب متطلبات المزود.\n"
-                "يفضَّل إرسال الرابط الكامل للتأكد من تنفيذ الطلب بشكل صحيح."
             )
         else:
             message_text = (
@@ -932,11 +923,6 @@ def button_handler(update: Update, context: CallbackContext):
             message_text = (
                 "يرجى ارسال رابط البث المباشر الخاص بك على تيكتوك.\n"
                 "🔴 تنبيه: أرسل <b>رابط البث</b> وليس اليوزرنيم."
-            )
-        elif "نقاط تحديات" in service_name:
-            message_text = (
-                "أرسل رابط حساب/منشور تيكتوك المطلوب احتسابه لنقاط التحديات حسب متطلبات المزود.\n"
-                "يفضَّل إرسال الرابط الكامل للتأكد من تنفيذ الطلب بشكل صحيح."
             )
         elif "تيكتوك" in service_name:
             message_text = (
@@ -1051,7 +1037,7 @@ def button_handler(update: Update, context: CallbackContext):
         query.edit_message_text("أرسل رقم الكارت المكون من 14 أو 16 رقم (يمكنك لصقه كما هو):")
         return
 
-    # شحن عبر طرق أخرى (سوبركي / زين كاش / USDT / نقاط سنتات / هلابي): رسالة دعم
+    # شحن عبر طرق أخرى
     if data in ("charge_superkey", "charge_zaincash", "charge_usdt", "charge_cent_points", "charge_helabi"):
         msg = f"لإتمام عملية الشحن تواصل مع الدعم الفني عبر الضغط هنا👈🏻 {SUPPORT_CONTACT}"
         query.edit_message_text(
@@ -1465,94 +1451,6 @@ def button_handler(update: Update, context: CallbackContext):
                 txt += f"{i}) {fn} (@{un}) - ID: {mid}\n"
             query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="manage_mods")]]))
             return
-
-    # ========== لوحة المشرف ==========
-    if data == "moderator_menu":
-        if is_moderator(user_id):
-            query.edit_message_text("لوحة تحكم المشرف:", reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("مراجعة الطلبات المعلقة", callback_data="mod_review_pending")],
-                [InlineKeyboardButton("إحصائيات الطلبات", callback_data="mod_stats")],
-                [InlineKeyboardButton("شرح الخصومات", callback_data="mod_discounts_info")],
-                [InlineKeyboardButton("رجوع", callback_data="back_main")],
-            ]))
-        else:
-            query.edit_message_text("هذه الميزة مخصصة للمشرفين فقط.")
-        return
-
-    if data == "mod_review_pending":
-        if not is_moderator(user_id):
-            query.edit_message_text("هذه الميزة مخصصة للمشرفين فقط.")
-            return
-        pend = len(pending_orders) + len(pending_pubg_orders) + len(pending_cards) + len(pending_itunes_orders)
-        txt = (
-            "📮 الطلبات المعلقة:\n"
-            f"- إجمالي المعلّقة: {pend}\n"
-            f"- العادية: {len(pending_orders)}\n"
-            f"- شدات ببجي: {len(pending_pubg_orders)}\n"
-            f"- كروت الشحن: {len(pending_cards)}\n"
-            f"- الايتونز: {len(pending_itunes_orders)}\n\n"
-            "يمكنك إشعار المالك الآن لمراجعتها."
-        )
-        kb = [[InlineKeyboardButton("🔔 إشعار المالك بالمراجعة", callback_data="mod_ping_owner")],
-              [InlineKeyboardButton("رجوع", callback_data="moderator_menu")]]
-        query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kb))
-        return
-
-    if data == "mod_ping_owner":
-        if not is_moderator(user_id):
-            query.edit_message_text("هذه الميزة مخصصة للمشرفين فقط.")
-            return
-        pend = len(pending_orders) + len(pending_pubg_orders) + len(pending_cards) + len(pending_itunes_orders)
-        try:
-            context.bot.send_message(
-                chat_id=ADMIN_ID,
-                text=(
-                    "🔔 إشعار من أحد المشرفين لمراجعة الطلبات المعلقة.\n"
-                    f"المشرف: {update.effective_user.full_name} (@{update.effective_user.username or 'NoUsername'})\n"
-                    f"إجمالي المعلّقة الآن: {pend}\n"
-                    f"- العادية: {len(pending_orders)}, ببجي: {len(pending_pubg_orders)}, الكروت: {len(pending_cards)}, الايتونز: {len(pending_itunes_orders)}"
-                )
-            )
-            query.edit_message_text("تم إشعار المالك. شكراً لك.", reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("رجوع", callback_data="moderator_menu")]
-            ]))
-        except Exception as e:
-            logger.error("mod_ping_owner error: %s", e)
-            query.edit_message_text("تعذر إشعار المالك حالياً.", reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("رجوع", callback_data="moderator_menu")]
-            ]))
-        return
-
-    if data == "mod_stats":
-        if not is_moderator(user_id):
-            query.edit_message_text("هذه الميزة مخصصة للمشرفين فقط.")
-            return
-        completed = len(completed_orders)
-        ongoing = sum(1 for o in completed_orders if o.get("order_number", "N/A") != "N/A" and not o.get("refunded"))
-        pending_total = len(pending_orders) + len(pending_pubg_orders) + len(pending_cards) + len(pending_itunes_orders)
-        canceled_est = sum(1 for o in completed_orders if o.get("refunded"))
-        txt = (
-            "📊 إحصائيات الطلبات:\n"
-            f"- مكتملة: {completed}\n"
-            f"- جارية: {ongoing}\n"
-            f"- معلّقة: {pending_total}\n"
-            f"- ملغاة/مسترجعة: {canceled_est}"
-        )
-        query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="moderator_menu")]]))
-        return
-
-    if data == "mod_discounts_info":
-        if not is_moderator(user_id):
-            query.edit_message_text("هذه الميزة مخصصة للمشرفين فقط.")
-            return
-        txt = (
-            "💡 خصومات المشرف:\n"
-            "• المتابعين/اللايكات/مشاهدات البث/رفع سكور تيكتوك/خدمات التليجرام ⇒ ×0.8\n"
-            "• شراء رصيد ايتونز/شدات ببجي ⇒ ×0.9\n"
-            "تُطبق الخصومات تلقائياً عند عرض الأسعار والخصم من الرصيد، ولا تؤثر على أسعار المستخدمين العاديين."
-        )
-        query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="moderator_menu")]]))
-        return
 
 # =========================
 # استقبال الرسائل (Message)
