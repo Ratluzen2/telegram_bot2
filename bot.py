@@ -39,7 +39,7 @@ logger = logging.getLogger("TG_BOT")
 # =========================
 # إعداد المتغيرات العامة
 # =========================
-ADMIN_ID = ADMIN_ID               # ← غيّر آيدي المالك
+ADMIN_ID = "ADMIN_ID"               # ← غيّر آيدي المالك
 TOKEN = "TOKEN"   # ← ضع توكن البوت هنا (لا تنشره علنًا)
 API_KEY = "API_KEY"
 API_URL = "API_URL"
