@@ -7,6 +7,8 @@
 - زر "الطلبات المعلّقة (الخدمات)" لاعتماد/رفض الطلبات وتنفيذ الـ API
 - المتصدرين🎉: عرض أعلى 10 إنفاقًا مع الجوائز (موجود للمستخدم/المشرف في الرئيسية، وللمالك داخل لوحته)
 - طرق شحن إضافية: نقاط سنتات / هلابي (نفس رسالة الدعم)
+- إصلاح تشابك الحالات عند استخدام /start (تفريغ الحالات)
+- إصلاح قسم "رفع سكور تيكتوك": أزرار قصيرة callback_data لتفادي حد 64 بايت
 - قراءة الإعدادات من متغيّرات البيئة (Heroku Config Vars) أو القيم الافتراضية
 """
 
@@ -55,7 +57,6 @@ if not TOKEN or ":" not in TOKEN:
 # =========================
 # تعريف القواميس الخاصة بالخدمات
 # =========================
-# خريطة الخدمات التي تُنفّذ عبر API (بما فيها رفع سكور تيكتوك)
 service_api_mapping = {
     "متابعين تيكتوك 1k": {"service_id": 13912, "quantity_multiplier": 1000},
     "متابعين تيكتوك 2k": {"service_id": 13912, "quantity_multiplier": 2000},
@@ -98,7 +99,7 @@ service_api_mapping = {
     "مشاهدات بث انستغرام 3k": {"service_id": 12595, "quantity_multiplier": 3000},
     "مشاهدات بث انستغرام 4k": {"service_id": 12595, "quantity_multiplier": 4000},
 
-    # ====== إصلاح سكور تيكتوك: تأكيد الخدمات والـ service_id ======
+    # ====== سكور تيكتوك (تم إصلاحه) ======
     "نقاط تحديات تيك توك جديدة | سكور 🎯": {"service_id": 13125, "quantity_multiplier": 1000},
     "رفع سكور بثك1k": {"service_id": 13125, "quantity_multiplier": 1000},
     "رفع سكور بثك2k": {"service_id": 13125, "quantity_multiplier": 2000},
@@ -106,7 +107,7 @@ service_api_mapping = {
     "رفع سكور بثك10k": {"service_id": 13125, "quantity_multiplier": 10000},
 }
 
-# الأسعار الأساسية (للمستخدمين العاديين)
+# الأسعار الأساسية
 services_dict = {
     "متابعين تيكتوك 1k": 3.50,
     "متابعين تيكتوك 2k": 7,
@@ -149,8 +150,8 @@ services_dict = {
     "مشاهدات بث انستغرام 3k": 6,
     "مشاهدات بث انستغرام 4k": 8,
 
-    # ====== أسعار السكور (تُنفّذ عبر API 13125) ======
-    "نقاط تحديات تيك توك جديدة | سكور 🎯": 0.51,  # لكل 1000 نقطة (quantity_multiplier=1000)
+    # ====== أسعار السكور ======
+    "نقاط تحديات تيك توك جديدة | سكور 🎯": 0.51,
     "رفع سكور بثك1k": 2,
     "رفع سكور بثك2k": 4,
     "رفع سكور بثك3k": 6,
@@ -487,12 +488,10 @@ def get_effective_price(user_id: int, service_name: str, base_price: float, kind
 # لوحات المفاتيح (Keyboards)
 # =========================
 def main_menu_keyboard(user_id: int):
-    # المالك: بدون زر المتصدرين في الرئيسية
     if user_id == ADMIN_ID:
         return InlineKeyboardMarkup([
             [InlineKeyboardButton("لوحة تحكم المالك", callback_data="admin_menu")]
         ])
-    # المشرف
     if is_moderator(user_id):
         return InlineKeyboardMarkup([
             [InlineKeyboardButton("الخدمات", callback_data="show_services")],
@@ -500,7 +499,6 @@ def main_menu_keyboard(user_id: int):
             [InlineKeyboardButton("لوحة تحكم المشرف", callback_data="moderator_menu")],
             [InlineKeyboardButton("المتصدرين🎉", callback_data="show_leaderboard")]
         ])
-    # المستخدم العادي
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("الخدمات", callback_data="show_services")],
         [InlineKeyboardButton("رصيدي", callback_data="show_balance")],
@@ -524,7 +522,7 @@ def admin_menu_keyboard():
         [InlineKeyboardButton("اعلان البوت", callback_data="admin_announce")],
         [InlineKeyboardButton("فحص رصيد API", callback_data="api_check_balance"),
          InlineKeyboardButton("فحص حالة طلب API", callback_data="api_order_status")],
-        [InlineKeyboardButton("المتصدرين🎉", callback_data="show_leaderboard")],  # يبقى داخل لوحة التحكم
+        [InlineKeyboardButton("المتصدرين🎉", callback_data="show_leaderboard")],
         [InlineKeyboardButton("رجوع", callback_data="back_main")]
     ]
     return InlineKeyboardMarkup(buttons)
@@ -543,13 +541,16 @@ def services_menu_keyboard():
     ]
     return InlineKeyboardMarkup(buttons)
 
-def tiktok_score_keyboard(user_id: int):
-    # يظهر كل خدمات السكور المحددة أعلاه مع خصم المشرف إن وجد
-    score_services = {k: v for k, v in services_dict.items() if ("رفع سكور" in k or "نقاط تحديات" in k)}
+def tiktok_score_keyboard(user_id: int, context: CallbackContext):
+    # استخدام callback_data قصيرة لتفادي حد 64 بايت
+    score_services = [(k, v) for k, v in services_dict.items() if ("رفع سكور" in k or "نقاط تحديات" in k)]
+    # احفظ الخريطة في سياق المستخدم
+    context.user_data["score_map"] = [name for name, _ in score_services]
     service_buttons = []
-    for service_name, price in score_services.items():
+    for idx, (service_name, price) in enumerate(score_services):
         eff = get_effective_price(user_id, service_name, price, "generic")
-        service_buttons.append([InlineKeyboardButton(f"{service_name} - {eff}$", callback_data=f"service_{service_name}")])
+        # callback_data قصيرة
+        service_buttons.append([InlineKeyboardButton(f"{service_name} - {eff}$", callback_data=f"score_service_{idx}")])
     service_buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
     return InlineKeyboardMarkup(service_buttons)
 
@@ -578,7 +579,8 @@ def clear_all_waiting_flags(context: CallbackContext):
         "selected_itunes_service", "itunes_service_price", "waiting_for_itunes_confirm",
         "waiting_for_itunes_code", "itunes_to_complete", "itunes_to_complete_index",
         "selected_telegram_service", "telegram_service_price", "waiting_for_telegram_link",
-        "waiting_for_new_mod", "waiting_for_remove_mod", "admin_target_id"
+        "waiting_for_new_mod", "waiting_for_remove_mod", "admin_target_id",
+        "score_map"  # مسح خريطة السكور عند الحاجة
     ]
     for key in waiting_keys:
         context.user_data.pop(key, None)
@@ -648,7 +650,6 @@ def start(update: Update, context: CallbackContext):
         update.message.reply_text(ban_msg)
         return
 
-    # مسح حالات قديمة لمنع التشابك
     clear_all_waiting_flags(context)
 
     full_name = update.effective_user.full_name
@@ -745,7 +746,6 @@ def button_handler(update: Update, context: CallbackContext):
     data = query.data
     query.answer()
 
-    # منع تشابك حالات قديمة
     clear_all_waiting_flags(context)
 
     ban_msg = _is_user_blocked_now(user_id)
@@ -827,8 +827,60 @@ def button_handler(update: Update, context: CallbackContext):
         return
 
     if data == "show_tiktok_score":
-        # قائمة خدمات السكور
-        query.edit_message_text("اختر خدمة رفع سكور تيكتوك المطلوبة:", reply_markup=tiktok_score_keyboard(user_id))
+        query.edit_message_text("اختر خدمة رفع سكور تيكتوك المطلوبة:", reply_markup=tiktok_score_keyboard(user_id, context))
+        return
+
+    # === أزرار السكور القصيرة ===
+    if data.startswith("score_service_"):
+        try:
+            idx = int(data.split("_")[-1])
+        except Exception:
+            query.edit_message_text("حدث خطأ في اختيار الخدمة.")
+            return
+        names = context.user_data.get("score_map") or [k for k in services_dict.keys() if ("رفع سكور" in k or "نقاط تحديات" in k)]
+        if idx < 0 or idx >= len(names):
+            query.edit_message_text("الخدمة غير موجودة.")
+            return
+        service_name = names[idx]
+        base_price = services_dict.get(service_name)
+        if base_price is None:
+            query.edit_message_text("الخدمة غير موجودة.")
+            return
+        price = get_effective_price(user_id, service_name, base_price, "generic")
+        current_balance = users_balance.get(user_id, 0.0)
+        if current_balance < price:
+            buttons = [
+                [InlineKeyboardButton("شحن عبر اسياسيل", callback_data="charge_asiacell")],
+                [InlineKeyboardButton("شحن عبر سوبركي", callback_data="charge_superkey")],
+                [InlineKeyboardButton("شحن عبر زين كاش", callback_data="charge_zaincash")],
+                [InlineKeyboardButton("شحن عبر USDT", callback_data="charge_usdt")],
+                [InlineKeyboardButton("شحن عبر نقاط سنتات", callback_data="charge_cent_points")],
+                [InlineKeyboardButton("شحن عبر هلابي", callback_data="charge_helabi")],
+                [InlineKeyboardButton("رجوع", callback_data="show_tiktok_score")]
+            ]
+            query.edit_message_text("رصيدك ليس كافياً.", reply_markup=InlineKeyboardMarkup(buttons))
+            return
+
+        # رسائل توضيحية خاصة بالسكور
+        if "رفع سكور بث" in service_name:
+            message_text = (
+                "يرجى ارسال رابط البث المباشر الخاص بك على تيكتوك.\n"
+                "🔴 تنبيه: أرسل <b>رابط البث</b> وليس اليوزرنيم."
+            )
+        elif "نقاط تحديات" in service_name:
+            message_text = (
+                "أرسل رابط حساب/منشور تيكتوك المطلوب احتسابه لنقاط التحديات حسب متطلبات المزود.\n"
+                "يفضَّل إرسال الرابط الكامل للتأكد من تنفيذ الطلب بشكل صحيح."
+            )
+        else:
+            message_text = (
+                "الرجاء إرسال الرابط الخاص بالخدمة المطلوبة:\n"
+                "🔴 ملاحظة: أرسل <b>الرابط</b> وليس اليوزرنيم!"
+            )
+
+        context.user_data["selected_service"] = service_name
+        context.user_data["service_price"] = price
+        query.edit_message_text(message_text, parse_mode="HTML")
         return
 
     if data == "show_itunes_services":
@@ -848,7 +900,7 @@ def button_handler(update: Update, context: CallbackContext):
         query.edit_message_text("اختر خدمة شحن شدات ببجي:", reply_markup=InlineKeyboardMarkup(service_buttons))
         return
 
-    # اختيار خدمة عامة (تشمل السكور)
+    # اختيار خدمة عامة
     if data.startswith("service_"):
         service_name = data[len("service_"):]
         base_price = services_dict.get(service_name)
@@ -870,7 +922,6 @@ def button_handler(update: Update, context: CallbackContext):
             query.edit_message_text("رصيدك ليس كافياً.", reply_markup=InlineKeyboardMarkup(buttons))
             return
 
-        # رسائل توجيه حسب نوع الخدمة
         if "انستغرام" in service_name:
             message_text = (
                 "الرجاء إرسال رابط الخدمة الخاص بك\n"
@@ -1190,7 +1241,6 @@ def button_handler(update: Update, context: CallbackContext):
             except Exception:
                 query.answer("تعذر حذف هذا الطلب.", show_alert=True)
                 return
-            # إعادة عرض القائمة بعد الحذف
             query.data = "review_orders"
             button_handler(update, context)
             return
@@ -1696,7 +1746,6 @@ def handle_messages(update: Update, context: CallbackContext):
             "submitted_at": time.time()
         })
 
-        # إشعار المالك فورًا
         try:
             context.bot.send_message(
                 chat_id=ADMIN_ID,
@@ -1775,7 +1824,6 @@ def handle_messages(update: Update, context: CallbackContext):
             "ordered_at": time.time()
         })
 
-        # إشعار المالك بوجود طلب خدمة جديد
         try:
             context.bot.send_message(
                 chat_id=ADMIN_ID,
@@ -1897,7 +1945,6 @@ def handle_messages(update: Update, context: CallbackContext):
             "ordered_at": time.time()
         })
 
-        # إشعار المالك
         try:
             context.bot.send_message(
                 chat_id=ADMIN_ID,
