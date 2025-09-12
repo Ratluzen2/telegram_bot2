@@ -6,6 +6,8 @@
 - إصلاح شحن آسياسيل مع إشعار فوري للمالك
 - زر "الطلبات المعلّقة (الخدمات)" لاعتماد/رفض الطلبات وتنفيذ الـ API
 - قراءة الإعدادات من متغيّرات البيئة (Heroku Config Vars) أو القيم الافتراضية
+- ميزة الحماية: حظر ساعتين عند تكرار نفس كارت آسياسيل > 2 أو سبام كروت خلال وقت قصير
+- المتصدرين🎉: عرض أعلى 10 إنفاقًا مع الجوائز
 """
 
 import logging
@@ -180,20 +182,17 @@ pending_cards = []            # كروت شحن معلّقة
 pending_pubg_orders = []      # طلبات ببجي معلّقة
 completed_orders = []         # طلبات اكتملت (مع طابع زمني)
 pending_itunes_orders = []    # طلبات ايتونز معلّقة
-blocked_users = {}            # {user_id: True أو dict مع معلومات الحظر}
+blocked_users = {}            # {user_id: True أو dict}
 
-# ===== ميزة الحماية (إضافة جديدة فقط) =====
-# إعدادات قابلة للتهيئة عبر البيئة
-CARD_DUP_LIMIT = int(os.getenv("CARD_DUP_LIMIT", "2"))                 # يُحظر في المحاولة الثالثة لنفس الكارت
-CARD_SPAM_COUNT = int(os.getenv("CARD_SPAM_COUNT", "5"))               # عدد الكروت الأقصى ضمن النافذة
-CARD_SPAM_WINDOW_SECONDS = int(os.getenv("CARD_SPAM_WINDOW_SECONDS", "120"))  # نافذة الزمن بالثواني
-CARD_BAN_HOURS = int(os.getenv("CARD_BAN_HOURS", "2"))                 # مدة الحظر بالساعات
+# ===== ميزة الحماية (موجودة سابقًا) =====
+CARD_DUP_LIMIT = int(os.getenv("CARD_DUP_LIMIT", "2"))
+CARD_SPAM_COUNT = int(os.getenv("CARD_SPAM_COUNT", "5"))
+CARD_SPAM_WINDOW_SECONDS = int(os.getenv("CARD_SPAM_WINDOW_SECONDS", "120"))
+CARD_BAN_HOURS = int(os.getenv("CARD_BAN_HOURS", "2"))
 
-# تخزين تاريخ محاولات الكروت لكل مستخدم
-card_submission_history = {}  # {user_id: {"counts": {digits: count}, "times": [ts1, ts2, ...]}}
+card_submission_history = {}  # {user_id: {"counts": {digits: count}, "times": [ts,...]}}
 
 def _ban_user_for_hours(user_id: int, hours: int, reason: str):
-    """حظر المستخدم لمدة محددة مع سبب."""
     until_ts = time.time() + hours * 3600
     blocked_users[user_id] = {"until": until_ts, "reason": reason}
 
@@ -206,66 +205,46 @@ def _remaining_human(seconds: int) -> str:
     parts = []
     if h: parts.append(f"{h}س")
     if mm: parts.append(f"{mm}د")
-    if ss and not h: parts.append(f"{ss}ث")  # نعرض الثواني فقط إذا مافي ساعات
+    if ss and not h: parts.append(f"{ss}ث")
     return " ".join(parts) or "قليل"
 
 def _is_user_blocked_now(user_id: int) -> Optional[str]:
-    """
-    يعيد None إذا غير محظور، وإلا يعيد رسالة الحظر (ويفك الحظر تلقائياً إذا انتهت المدة).
-    """
     if user_id == ADMIN_ID:
         return None
     info = blocked_users.get(user_id)
     if not info:
         return None
-    # دعم القيمة القديمة True
     if info is True:
         return "لقد تم حضرك من استخدام البوت.\nانتظر حتى يتم الغاء حظرك."
     if isinstance(info, dict):
         until = info.get("until")
         reason = info.get("reason", "مخالفة سياسات الاستخدام.")
         if until and time.time() >= until:
-            # فك الحظر تلقائياً بعد انتهاء المدة
             try:
                 del blocked_users[user_id]
             except Exception:
                 pass
             return None
-        # مدة متبقية
         remain = int(until - time.time()) if until else 0
         return f"تم حظرك لمدة مؤقتة.\nالسبب: {reason}\nالمدة المتبقية: {_remaining_human(remain)}"
     return "لقد تم حضرك من استخدام البوت.\nانتظر حتى يتم الغاء حظرك."
 
 def _record_and_check_card(user_id: int, digits: str) -> Optional[str]:
-    """
-    يسجل محاولة إدخال كارت ويعيد سبب الحظر لو وُجد، وإلا يعيد None.
-    - يحظر عند تكرار نفس الكارت لأكثر من CARD_DUP_LIMIT مرة.
-    - يحظر عند إرسال أكثر من CARD_SPAM_COUNT كروت خلال CARD_SPAM_WINDOW_SECONDS.
-    """
     now = time.time()
     hist = card_submission_history.setdefault(user_id, {"counts": {}, "times": []})
-    # عداد التكرار لنفس الكارت
     prev = hist["counts"].get(digits, 0)
     hist["counts"][digits] = prev + 1
-
-    # طوابع زمنية لمحاولات الكروت
     hist["times"].append(now)
     cutoff = now - CARD_SPAM_WINDOW_SECONDS
     hist["times"] = [t for t in hist["times"] if t >= cutoff]
-
-    # شرط التكرار
     if hist["counts"][digits] > CARD_DUP_LIMIT:
         return "إدخال نفس رقم كارت آسياسيل أكثر من مرتين."
-
-    # شرط السبام ضمن النافذة
     if len(hist["times"]) > CARD_SPAM_COUNT:
         return "إرسال عدد كبير من كروت آسياسيل خلال وقت قصير."
-
     return None
-# ===== نهاية ميزة الحماية =====
 
 # =========================
-# قاعدة البيانات Neon (PostgreSQL) عبر psycopg3
+# قاعدة البيانات Neon (PostgreSQL)
 # =========================
 import psycopg
 from psycopg_pool import ConnectionPool
@@ -281,7 +260,6 @@ if not DATABASE_URL:
     logger.error("❌ DATABASE_URL غير مضبوط. عيّن رابط Neon (يفضّل pooler endpoint مع sslmode=require).")
     raise SystemExit(1)
 
-# تحذير إن لم يكن endpoint الخاص بالـ pooler
 try:
     _host = urlparse(DATABASE_URL).hostname or ""
     if "pooler" not in _host:
@@ -289,34 +267,31 @@ try:
 except Exception:
     pass
 
-# Pool بإعدادات مهلة أوضح
 pg_pool = ConnectionPool(
     conninfo=DATABASE_URL,
     min_size=1,
-    max_size=5,            # كافي للبوت
-    max_idle=60,           # ثواني
-    timeout=60,            # مهلة استعارة اتصال من الـ pool
+    max_size=5,
+    max_idle=60,
+    timeout=60,
     kwargs={
         "sslmode": "require",
-        "connect_timeout": 10,  # مهلة إنشاء اتصال فعلي
+        "connect_timeout": 10,
     },
 )
 
 def _pool_healthcheck():
-    """نتأكد أن الاتصال يعمل ونطبع السبب الحقيقي لو فشل."""
     try:
-        pg_pool.wait(timeout=30)  # انتظر تهيئة الـ pool
+        pg_pool.wait(timeout=30)
         with pg_pool.connection() as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT 1")
                 cur.fetchone()
         logger.info("✅ تم الاتصال بقاعدة البيانات بنجاح.")
     except Exception as e:
-        logger.exception("❌ فشل الاتصال بقاعدة البيانات. تحقق من DATABASE_URL وNeon: %s", e)
+        logger.exception("❌ فشل الاتصال بقاعدة البيانات: %s", e)
         raise
 
 def _exec(sql: str, params: tuple = (), fetch: str = ""):
-    """تنفيذ الاستعلامات مع الالتزام. fetch: '' | 'one' | 'all'."""
     try:
         with pg_pool.connection() as conn:
             with conn.cursor() as cur:
@@ -333,16 +308,15 @@ def _exec(sql: str, params: tuple = (), fetch: str = ""):
                 conn.commit()
                 return rc
     except psycopg.OperationalError as e:
-        logger.exception("❌ OperationalError من PostgreSQL: %s", e)
+        logger.exception("❌ OperationalError: %s", e)
         raise
     except Exception as e:
         logger.exception("❌ DB error: %s", e)
         raise
 
-# صحّة الاتصال قبل إنشاء الجداول
 _pool_healthcheck()
 
-# إنشاء الجداول (إن لم تكن موجودة) + الأعمدة المطلوبة
+# إنشاء الجداول/الأعمدة
 _exec("""
 CREATE TABLE IF NOT EXISTS users (
     user_id BIGINT PRIMARY KEY
@@ -351,6 +325,8 @@ CREATE TABLE IF NOT EXISTS users (
 _exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS full_name TEXT")
 _exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS username  TEXT")
 _exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS balance   REAL DEFAULT 0")
+# عمود إجمالي الصرف (للمتصدرين)
+_exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS total_spent REAL DEFAULT 0")
 
 _exec("""
 CREATE TABLE IF NOT EXISTS moderators (
@@ -361,11 +337,11 @@ CREATE TABLE IF NOT EXISTS moderators (
 """)
 
 # =========================
-# دوال DB والمستخدمين
+# دوال DB والمستخدمين + الصرف
 # =========================
 def get_user_from_db(user_id: int):
     return _exec(
-        "SELECT user_id, full_name, username, balance FROM users WHERE user_id=%s",
+        "SELECT user_id, full_name, username, balance, total_spent FROM users WHERE user_id=%s",
         (user_id,),
         fetch="one"
     )
@@ -374,8 +350,8 @@ def add_user_to_db(user_id: int, full_name: str, username: str):
     row = get_user_from_db(user_id)
     if not row:
         _exec(
-            "INSERT INTO users (user_id, full_name, username, balance) VALUES (%s, %s, %s, %s)",
-            (user_id, full_name, username, 0.0)
+            "INSERT INTO users (user_id, full_name, username, balance, total_spent) VALUES (%s, %s, %s, %s, %s)",
+            (user_id, full_name, username, 0.0, 0.0)
         )
 
 def update_user_balance_in_db(user_id: int, balance: float):
@@ -384,15 +360,33 @@ def update_user_balance_in_db(user_id: int, balance: float):
 def update_username_in_db(user_id: int, username: str):
     _exec("UPDATE users SET username=%s WHERE user_id=%s", (username, user_id))
 
+def add_user_spent(user_id: int, amount: float):
+    _exec("UPDATE users SET total_spent = COALESCE(total_spent,0) + %s WHERE user_id=%s", (amount, user_id))
+
+def reduce_user_spent(user_id: int, amount: float):
+    # لا نجعلها سالبة
+    _exec("""
+        UPDATE users
+        SET total_spent = GREATEST(COALESCE(total_spent,0) - %s, 0)
+        WHERE user_id=%s
+    """, (amount, user_id))
+
 def get_all_users():
     return _exec(
-        "SELECT user_id, full_name, username, balance FROM users",
+        "SELECT user_id, full_name, username, balance, total_spent FROM users",
         fetch="all"
     ) or []
 
 def get_users_with_balance_desc():
     return _exec(
-        "SELECT user_id, full_name, username, balance FROM users WHERE balance > 0 ORDER BY balance DESC",
+        "SELECT user_id, full_name, username, balance, total_spent FROM users WHERE balance > 0 ORDER BY balance DESC",
+        fetch="all"
+    ) or []
+
+def get_top_spenders(limit: int = 10):
+    return _exec(
+        "SELECT user_id, full_name, username, total_spent FROM users ORDER BY total_spent DESC, user_id ASC LIMIT %s",
+        (limit,),
         fetch="all"
     ) or []
 
@@ -446,18 +440,11 @@ def list_moderators():
     ) or []
 
 def get_effective_price(user_id: int, service_name: str, base_price: float, kind: str = "generic") -> float:
-    """
-    خصومات للمشرفين فقط:
-    - المتابعين/المشاهدات المباشرة/اللايكات/رفع سكور/خدمات التليجرام ⇒ *0.8
-    - ايتونز/ببجي ⇒ *0.9
-    """
     try:
         if not is_moderator(user_id):
             return base_price
-
         if kind in ("itunes", "pubg") or ("ايتونز" in service_name or "ببجي" in service_name):
             return round(float(base_price) * 0.90, 2)
-
         in_80 = (
             "متابعين" in service_name or
             "لايكات" in service_name or
@@ -468,7 +455,6 @@ def get_effective_price(user_id: int, service_name: str, base_price: float, kind
         )
         if in_80:
             return round(float(base_price) * 0.80, 2)
-
         return base_price
     except Exception as e:
         logger.error("get_effective_price error: %s", e)
@@ -479,16 +465,21 @@ def get_effective_price(user_id: int, service_name: str, base_price: float, kind
 # =========================
 def main_menu_keyboard(user_id: int):
     if user_id == ADMIN_ID:
-        return InlineKeyboardMarkup([[InlineKeyboardButton("لوحة تحكم المالك", callback_data="admin_menu")]])
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton("لوحة تحكم المالك", callback_data="admin_menu")],
+            [InlineKeyboardButton("المتصدرين🎉", callback_data="show_leaderboard")]
+        ])
     if is_moderator(user_id):
         return InlineKeyboardMarkup([
             [InlineKeyboardButton("الخدمات", callback_data="show_services")],
             [InlineKeyboardButton("رصيدي", callback_data="show_balance")],
-            [InlineKeyboardButton("لوحة تحكم المشرف", callback_data="moderator_menu")]
+            [InlineKeyboardButton("لوحة تحكم المشرف", callback_data="moderator_menu")],
+            [InlineKeyboardButton("المتصدرين🎉", callback_data="show_leaderboard")]
         ])
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("الخدمات", callback_data="show_services")],
-        [InlineKeyboardButton("رصيدي", callback_data="show_balance")]
+        [InlineKeyboardButton("رصيدي", callback_data="show_balance")],
+        [InlineKeyboardButton("المتصدرين🎉", callback_data="show_leaderboard")]
     ])
 
 def admin_menu_keyboard():
@@ -625,8 +616,6 @@ def broadcast_ad(update: Update, context: CallbackContext):
 # =========================
 def start(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
-
-    # تحقق الحظر (مع الفك التلقائي عند الانتهاء)
     ban_msg = _is_user_blocked_now(user_id)
     if ban_msg:
         update.message.reply_text(ban_msg)
@@ -701,8 +690,10 @@ def approve_order_process(order_index: int, context: CallbackContext, query):
             query.edit_message_text("تم تنفيذ الطلب عبر API وإشعار المستخدم.",
                                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_menu")]]))
         else:
+            # فشل التنفيذ => إعادة رصيد + خصم الصرف المُسجل
             users_balance[order_info['user_id']] = users_balance.get(order_info['user_id'], 0.0) + order_info['price']
             sync_balance_to_db(order_info['user_id'])
+            reduce_user_spent(order_info['user_id'], order_info['price'])
             context.bot.send_message(chat_id=order_info['user_id'], text="فشل تنفيذ الطلب عبر النظام الخارجي، تمت إعادة المبلغ لرصيدك.")
             query.edit_message_text("فشل تنفيذ الطلب عبر API وتمت إعادة الرصيد للمستخدم.",
                                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_menu")]]))
@@ -717,7 +708,7 @@ def approve_order_process(order_index: int, context: CallbackContext, query):
                                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_menu")]]))
 
 # =========================
-# أزرار (Callback) الهاندلر
+# أزرار (Callback)
 # =========================
 def button_handler(update: Update, context: CallbackContext):
     query = update.callback_query
@@ -727,7 +718,6 @@ def button_handler(update: Update, context: CallbackContext):
 
     clear_all_waiting_flags(context)
 
-    # تحقق الحظر (مع الفك التلقائي عند الانتهاء)
     ban_msg = _is_user_blocked_now(user_id)
     if ban_msg:
         query.answer(ban_msg, show_alert=True)
@@ -741,7 +731,32 @@ def button_handler(update: Update, context: CallbackContext):
         query.edit_message_text("اختر القسم:", reply_markup=services_menu_keyboard())
         return
 
-    # ======= عرض الأقسام بأسعار (مع خصومات المشرف إن وُجد) =======
+    # ======= المتصدرين🎉 =======
+    if data == "show_leaderboard":
+        top = get_top_spenders(10)
+        header = (
+            "🥇 المتصدرون في الشراء داخل البوت\n\n"
+            "يحصل **أول 3 متصدرين** على جوائز تُضاف تلقائيًا خلال أسبوع:\n"
+            "• المركز الأول: 10$ 💰\n"
+            "• المركز الثاني: 5$ 💸\n"
+            "• المركز الثالث: 3$ 🎁\n\n"
+        )
+        if not top:
+            text_msg = header + "لا توجد عمليات شراء بعد. كن أنت الأول وابدأ بتجميع الصدارة!"
+        else:
+            lines = []
+            for i, (uid, fn, un, spent) in enumerate(top, start=1):
+                name = fn or "مستخدم"
+                usertag = f"@{un}" if un else ""
+                lines.append(f"{i}. {name} {usertag} — إجمالي الصرف: {round(spent or 0, 2)}$")
+            text_msg = header + "\n".join(lines)
+
+        kb = [[InlineKeyboardButton("رجوع", callback_data="back_main")]]
+        query.edit_message_text(text_msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+        return
+    # ===========================
+
+    # ======= عرض الأقسام بأسعار =======
     if data == "show_followers":
         followers_services = {k: v for k, v in services_dict.items() if "متابعين" in k}
         service_buttons = []
@@ -763,7 +778,7 @@ def button_handler(update: Update, context: CallbackContext):
         return
 
     if data == "show_views":
-        views_services = {k: v for k, v in services_dict.items() if "مشاهدات تيكتوك" in k or "مشاهدات انستغرام" in k}
+        views_services = {k: v for k, v in services_dict.items() if ("مشاهدات تيكتوك" in k or "مشاهدات انستغرام" in k)}
         service_buttons = []
         for name, price in views_services.items():
             eff = get_effective_price(user_id, name, price, "generic")
@@ -773,7 +788,6 @@ def button_handler(update: Update, context: CallbackContext):
         return
 
     if data == "show_live_views":
-        # ✅ إصلاح: استخدام in بدل "في"
         live_views_services = {k: v for k, v in services_dict.items() if "مشاهدات بث" in k}
         service_buttons = []
         for name, price in live_views_services.items():
@@ -934,13 +948,13 @@ def button_handler(update: Update, context: CallbackContext):
         query.edit_message_text(f"رصيدك الحالي: {balance}$", reply_markup=InlineKeyboardMarkup(buttons))
         return
 
-    # شحن عبر آسياسيل (المنطق الأصلي)
+    # شحن عبر آسياسيل
     if data == "charge_asiacell":
         context.user_data["waiting_for_card"] = True
         query.edit_message_text("أرسل رقم الكارت المكون من 14 أو 16 رقم (يمكنك لصقه كما هو):")
         return
 
-    # شحن عبر طرق أخرى (سوبركي / زين كاش / USDT): رسالة توجّه للدعم
+    # طرق أخرى
     if data in ("charge_superkey", "charge_zaincash", "charge_usdt"):
         msg = f"لإتمام عملية الشحن تواصل مع الدعم الفني عبر الضغط هنا👈🏻 {SUPPORT_CONTACT}"
         query.edit_message_text(
@@ -958,7 +972,6 @@ def button_handler(update: Update, context: CallbackContext):
         return
 
     if user_id == ADMIN_ID:
-        # قائمة الطلبات المعلّقة (الخدمات)
         if data == "pending_smm_orders":
             if not pending_orders:
                 query.edit_message_text(
@@ -998,6 +1011,7 @@ def button_handler(update: Update, context: CallbackContext):
                 return
             users_balance[order_info['user_id']] = users_balance.get(order_info['user_id'], 0.0) + float(order_info['price'])
             sync_balance_to_db(order_info['user_id'])
+            reduce_user_spent(order_info['user_id'], float(order_info['price']))
             try:
                 context.bot.send_message(chat_id=order_info['user_id'], text="تم إلغاء طلبك وإعادة المبلغ إلى رصيدك.")
             except Exception:
@@ -1072,7 +1086,6 @@ def button_handler(update: Update, context: CallbackContext):
             query.edit_message_text(text_msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_menu")]]))
             return
 
-        # الطلبات المكتملة عبر API
         if data == "review_orders":
             filtered = [(i, o) for i, o in enumerate(completed_orders) if o.get("order_number", "N/A") != "N/A"]
             if not filtered:
@@ -1113,6 +1126,7 @@ def button_handler(update: Update, context: CallbackContext):
             target_id = order['user_id']
             users_balance[target_id] = users_balance.get(target_id, 0.0) + refund_amount
             sync_balance_to_db(target_id)
+            reduce_user_spent(target_id, refund_amount)
             order["refunded"] = True
             context.bot.send_message(chat_id=target_id, text=f"تم استعادة رصيدك المخصوم ({refund_amount}$)")
             query.answer("تم ارجاع الرصيد.")
@@ -1224,6 +1238,7 @@ def button_handler(update: Update, context: CallbackContext):
             order_info = pending_pubg_orders.pop(order_index)
             users_balance[order_info['user_id']] += order_info['price']
             sync_balance_to_db(order_info['user_id'])
+            reduce_user_spent(order_info['user_id'], order_info['price'])
             context.bot.send_message(chat_id=order_info['user_id'], text="تم إلغاء طلب شحن شدات ببجي وإعادة المبلغ إلى حسابك.")
             query.edit_message_text("تم إلغاء طلب شحن شدات ببجي وإعادة المبلغ للمستخدم.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="pending_pubg_orders")]]))
             return
@@ -1300,6 +1315,7 @@ def button_handler(update: Update, context: CallbackContext):
             itunes_order = pending_itunes_orders.pop(itunes_index)
             users_balance[itunes_order['user_id']] += itunes_order['price']
             sync_balance_to_db(itunes_order['user_id'])
+            reduce_user_spent(itunes_order['user_id'], itunes_order['price'])
             context.bot.send_message(chat_id=itunes_order['user_id'], text="تم إلغاء طلب شحن الايتونز وإعادة المبلغ لرصيدك.")
             query.edit_message_text("تم إلغاء طلب شحن الايتونز وإعادة المبلغ للمستخدم.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="pending_itunes_orders")]]))
             return
@@ -1431,8 +1447,6 @@ def button_handler(update: Update, context: CallbackContext):
 # =========================
 def handle_messages(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
-
-    # تحقق الحظر (مع الفك التلقائي عند الانتهاء)
     ban_msg = _is_user_blocked_now(user_id)
     if ban_msg:
         update.message.reply_text(ban_msg)
@@ -1593,7 +1607,7 @@ def handle_messages(update: Update, context: CallbackContext):
             update.message.reply_text("لم يتم العثور على المشرف المحدد.")
         return
 
-    # ======== منطق الشحن عبر آسياسيل (المستخدم) + إشعار المالك فورًا ========
+    # ======== شحن آسياسيل (المستخدم) + حماية ========
     if context.user_data.get("waiting_for_card"):
         raw = text.strip()
         digits = "".join(ch for ch in raw if ch.isdigit())
@@ -1601,7 +1615,6 @@ def handle_messages(update: Update, context: CallbackContext):
             update.message.reply_text("❌ رقم الكارت غير صحيح. الرجاء إرسال رقم مكوّن من 14 أو 16 رقم.")
             return
 
-        # --- ميزة الحماية: كشف التكرار/السبام وحظر لمدة ساعتين عند المخالفة ---
         violation_reason = _record_and_check_card(user_id, digits)
         if violation_reason:
             _ban_user_for_hours(user_id, CARD_BAN_HOURS, violation_reason)
@@ -1610,7 +1623,6 @@ def handle_messages(update: Update, context: CallbackContext):
             )
             clear_all_waiting_flags(context)
             return
-        # -----------------------------------------------------------------------
 
         card_number_display = f"{digits[:4]}-{digits[4:8]}-{digits[8:12]}-{digits[12:]}" if len(digits) == 16 else digits
 
@@ -1622,7 +1634,6 @@ def handle_messages(update: Update, context: CallbackContext):
             "submitted_at": time.time()
         })
 
-        # إشعار المالك فورًا مع زر يفتح قائمة الكروت المعلقة
         try:
             context.bot.send_message(
                 chat_id=ADMIN_ID,
@@ -1662,13 +1673,11 @@ def handle_messages(update: Update, context: CallbackContext):
         users_balance[target_id] = users_balance.get(target_id, 0.0) + amount
         sync_balance_to_db(target_id)
 
-        # إزالة الكارت من القائمة
         try:
             pending_cards.pop(card_index)
         except Exception:
             pass
 
-        # إشعار المستخدم
         try:
             context.bot.send_message(chat_id=target_id, text=f"🎉 تم شحن رصيدك بقيمة {amount}$.")
         except Exception as e:
@@ -1678,7 +1687,7 @@ def handle_messages(update: Update, context: CallbackContext):
         clear_all_waiting_flags(context)
         return
 
-    # --- أوضاع المستخدم/المشرف (طلبات الخدمات) ---
+    # --- طلبات الخدمات (خصم رصيد + تسجيل صرف) ---
     if context.user_data.get("selected_service"):
         service_name = context.user_data.get("selected_service")
         price = float(context.user_data.get("service_price", 0))
@@ -1691,6 +1700,7 @@ def handle_messages(update: Update, context: CallbackContext):
             return
         users_balance[user_id] = round(bal - price, 2)
         sync_balance_to_db(user_id)
+        add_user_spent(user_id, price)
 
         pending_orders.append({
             "user_id": user_id,
@@ -1702,7 +1712,6 @@ def handle_messages(update: Update, context: CallbackContext):
             "ordered_at": time.time()
         })
 
-        # إشعار المالك بوجود طلب خدمة جديد
         try:
             context.bot.send_message(
                 chat_id=ADMIN_ID,
@@ -1731,6 +1740,7 @@ def handle_messages(update: Update, context: CallbackContext):
             return
         users_balance[user_id] = round(bal - price, 2)
         sync_balance_to_db(user_id)
+        add_user_spent(user_id, price)
 
         pending_pubg_orders.append({
             "user_id": user_id,
@@ -1758,6 +1768,7 @@ def handle_messages(update: Update, context: CallbackContext):
                 return
             users_balance[user_id] = round(bal - price, 2)
             sync_balance_to_db(user_id)
+            add_user_spent(user_id, price)
 
             pending_itunes_orders.append({
                 "user_id": user_id,
@@ -1810,6 +1821,7 @@ def handle_messages(update: Update, context: CallbackContext):
 
         users_balance[user_id] = round(bal - price, 2)
         sync_balance_to_db(user_id)
+        add_user_spent(user_id, price)
 
         pending_orders.append({
             "user_id": user_id,
@@ -1821,7 +1833,6 @@ def handle_messages(update: Update, context: CallbackContext):
             "ordered_at": time.time()
         })
 
-        # إشعار المالك
         try:
             context.bot.send_message(
                 chat_id=ADMIN_ID,
@@ -1851,17 +1862,11 @@ def main():
     updater = Updater(TOKEN, use_context=True)
     dp = updater.dispatcher
 
-    # أوامر
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(CommandHandler("help", help_cmd))
-
-    # أزرار
     dp.add_handler(CallbackQueryHandler(button_handler))
-
-    # رسائل (نص + وسائط) — للبث والإدخالات المختلفة
     dp.add_handler(MessageHandler((Filters.text | Filters.photo | Filters.video | Filters.voice) & ~Filters.command, handle_messages))
 
-    # بدء التشغيل
     updater.start_polling()
     updater.idle()
 
