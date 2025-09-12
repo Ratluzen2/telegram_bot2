@@ -763,7 +763,7 @@ def button_handler(update: Update, context: CallbackContext):
         return
 
     if data == "show_views":
-        views_services = {k: v for k, v in services_dict.items() if "مشاهدات تيكتوك" in k أو "مشاهدات انستغرام" in k}
+        views_services = {k: v for k, v in services_dict.items() if "مشاهدات تيكتوك" in k or "مشاهدات انستغرام" in k}
         service_buttons = []
         for name, price in views_services.items():
             eff = get_effective_price(user_id, name, price, "generic")
