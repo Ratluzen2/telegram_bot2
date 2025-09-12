@@ -180,7 +180,89 @@ pending_cards = []            # كروت شحن معلّقة
 pending_pubg_orders = []      # طلبات ببجي معلّقة
 completed_orders = []         # طلبات اكتملت (مع طابع زمني)
 pending_itunes_orders = []    # طلبات ايتونز معلّقة
-blocked_users = {}            # {user_id: True}
+blocked_users = {}            # {user_id: True أو dict مع معلومات الحظر}
+
+# ===== ميزة الحماية (إضافة جديدة فقط) =====
+# إعدادات قابلة للتهيئة عبر البيئة
+CARD_DUP_LIMIT = int(os.getenv("CARD_DUP_LIMIT", "2"))                 # يُحظر في المحاولة الثالثة لنفس الكارت
+CARD_SPAM_COUNT = int(os.getenv("CARD_SPAM_COUNT", "5"))               # عدد الكروت الأقصى ضمن النافذة
+CARD_SPAM_WINDOW_SECONDS = int(os.getenv("CARD_SPAM_WINDOW_SECONDS", "120"))  # نافذة الزمن بالثواني
+CARD_BAN_HOURS = int(os.getenv("CARD_BAN_HOURS", "2"))                 # مدة الحظر بالساعات
+
+# تخزين تاريخ محاولات الكروت لكل مستخدم
+card_submission_history = {}  # {user_id: {"counts": {digits: count}, "times": [ts1, ts2, ...]}}
+
+def _ban_user_for_hours(user_id: int, hours: int, reason: str):
+    """حظر المستخدم لمدة محددة مع سبب."""
+    until_ts = time.time() + hours * 3600
+    blocked_users[user_id] = {"until": until_ts, "reason": reason}
+
+def _remaining_human(seconds: int) -> str:
+    m = max(0, int(seconds))
+    h = m // 3600
+    m %= 3600
+    mm = m // 60
+    ss = m % 60
+    parts = []
+    if h: parts.append(f"{h}س")
+    if mm: parts.append(f"{mm}د")
+    if ss and not h: parts.append(f"{ss}ث")  # نعرض الثواني فقط إذا مافي ساعات
+    return " ".join(parts) or "قليل"
+
+def _is_user_blocked_now(user_id: int) -> Optional[str]:
+    """
+    يعيد None إذا غير محظور، وإلا يعيد رسالة الحظر (ويفك الحظر تلقائياً إذا انتهت المدة).
+    """
+    if user_id == ADMIN_ID:
+        return None
+    info = blocked_users.get(user_id)
+    if not info:
+        return None
+    # دعم القيمة القديمة True
+    if info is True:
+        return "لقد تم حضرك من استخدام البوت.\nانتظر حتى يتم الغاء حظرك."
+    if isinstance(info, dict):
+        until = info.get("until")
+        reason = info.get("reason", "مخالفة سياسات الاستخدام.")
+        if until and time.time() >= until:
+            # فك الحظر تلقائياً بعد انتهاء المدة
+            try:
+                del blocked_users[user_id]
+            except Exception:
+                pass
+            return None
+        # مدة متبقية
+        remain = int(until - time.time()) if until else 0
+        return f"تم حظرك لمدة مؤقتة.\nالسبب: {reason}\nالمدة المتبقية: {_remaining_human(remain)}"
+    return "لقد تم حضرك من استخدام البوت.\nانتظر حتى يتم الغاء حظرك."
+
+def _record_and_check_card(user_id: int, digits: str) -> Optional[str]:
+    """
+    يسجل محاولة إدخال كارت ويعيد سبب الحظر لو وُجد، وإلا يعيد None.
+    - يحظر عند تكرار نفس الكارت لأكثر من CARD_DUP_LIMIT مرة.
+    - يحظر عند إرسال أكثر من CARD_SPAM_COUNT كروت خلال CARD_SPAM_WINDOW_SECONDS.
+    """
+    now = time.time()
+    hist = card_submission_history.setdefault(user_id, {"counts": {}, "times": []})
+    # عداد التكرار لنفس الكارت
+    prev = hist["counts"].get(digits, 0)
+    hist["counts"][digits] = prev + 1
+
+    # طوابع زمنية لمحاولات الكروت
+    hist["times"].append(now)
+    cutoff = now - CARD_SPAM_WINDOW_SECONDS
+    hist["times"] = [t for t in hist["times"] if t >= cutoff]
+
+    # شرط التكرار
+    if hist["counts"][digits] > CARD_DUP_LIMIT:
+        return "إدخال نفس رقم كارت آسياسيل أكثر من مرتين."
+
+    # شرط السبام ضمن النافذة
+    if len(hist["times"]) > CARD_SPAM_COUNT:
+        return "إرسال عدد كبير من كروت آسياسيل خلال وقت قصير."
+
+    return None
+# ===== نهاية ميزة الحماية =====
 
 # =========================
 # قاعدة البيانات Neon (PostgreSQL) عبر psycopg3
@@ -543,8 +625,11 @@ def broadcast_ad(update: Update, context: CallbackContext):
 # =========================
 def start(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
-    if user_id in blocked_users and user_id != ADMIN_ID:
-        update.message.reply_text("لقد تم حضرك من استخدام البوت 🤣.\nانتظر حتى يتم الغاء حظرك.")
+
+    # تحقق الحظر (مع الفك التلقائي عند الانتهاء)
+    ban_msg = _is_user_blocked_now(user_id)
+    if ban_msg:
+        update.message.reply_text(ban_msg)
         return
 
     full_name = update.effective_user.full_name
@@ -642,8 +727,10 @@ def button_handler(update: Update, context: CallbackContext):
 
     clear_all_waiting_flags(context)
 
-    if user_id in blocked_users and user_id != ADMIN_ID:
-        query.answer("لقد تم حضرك من استخدام البوت 🤣.", show_alert=True)
+    # تحقق الحظر (مع الفك التلقائي عند الانتهاء)
+    ban_msg = _is_user_blocked_now(user_id)
+    if ban_msg:
+        query.answer(ban_msg, show_alert=True)
         return
 
     if data == "back_main":
@@ -676,7 +763,7 @@ def button_handler(update: Update, context: CallbackContext):
         return
 
     if data == "show_views":
-        views_services = {k: v for k, v in services_dict.items() if "مشاهدات تيكتوك" in k or "مشاهدات انستغرام" in k}
+        views_services = {k: v for k, v in services_dict.items() if "مشاهدات تيكتوك" in k أو "مشاهدات انستغرام" in k}
         service_buttons = []
         for name, price in views_services.items():
             eff = get_effective_price(user_id, name, price, "generic")
@@ -814,7 +901,7 @@ def button_handler(update: Update, context: CallbackContext):
             buttons = [
                 [InlineKeyboardButton("شحن عبر اسياسيل", callback_data="charge_asiacell")],
                 [InlineKeyboardButton("شحن عبر سوبركي", callback_data="charge_superkey")],
-                [InlineKeyboardButton("شحن عبر زين كاش", callback_data="charge_zينcash")],
+                [InlineKeyboardButton("شحن عبر زين كاش", callback_data="charge_zaincash")],
                 [InlineKeyboardButton("شحن عبر USDT", callback_data="charge_usdt")],
                 [InlineKeyboardButton("رجوع", callback_data="show_telegram_services")]
             ]
@@ -1344,13 +1431,16 @@ def button_handler(update: Update, context: CallbackContext):
 # =========================
 def handle_messages(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
+
+    # تحقق الحظر (مع الفك التلقائي عند الانتهاء)
+    ban_msg = _is_user_blocked_now(user_id)
+    if ban_msg:
+        update.message.reply_text(ban_msg)
+        return
+
     full_name = update.effective_user.full_name
     username = update.effective_user.username or "NoUsername"
     text = update.message.text or ""
-
-    if user_id in blocked_users and user_id != ADMIN_ID:
-        update.message.reply_text("لقد تم حضرك من استخدام البوت 🤣.\nانتظر حتى يتم الغاء حظرك.")
-        return
 
     # --- أوضاع المالك ---
     if user_id == ADMIN_ID and context.user_data.get("waiting_for_add_balance_user_id"):
@@ -1426,7 +1516,7 @@ def handle_messages(update: Update, context: CallbackContext):
     if user_id == ADMIN_ID and context.user_data.get("waiting_for_block"):
         ident = text.strip()
         if ident.isdigit():
-            blocked_users[int(ident)] = True
+            blocked_users[int(ident)] = {"until": time.time() + CARD_BAN_HOURS * 3600, "reason": "حظر يدوي من المالك."}
             update.message.reply_text("تم حضر المستخدم.")
         else:
             uname = _normalize_username(ident)
@@ -1436,7 +1526,7 @@ def handle_messages(update: Update, context: CallbackContext):
                     target = usr[0]
                     break
             if target:
-                blocked_users[target] = True
+                blocked_users[target] = {"until": time.time() + CARD_BAN_HOURS * 3600, "reason": "حظر يدوي من المالك."}
                 update.message.reply_text("تم حضر المستخدم.")
             else:
                 update.message.reply_text("لم يتم العثور على المستخدم.")
@@ -1510,6 +1600,17 @@ def handle_messages(update: Update, context: CallbackContext):
         if len(digits) not in (14, 16):
             update.message.reply_text("❌ رقم الكارت غير صحيح. الرجاء إرسال رقم مكوّن من 14 أو 16 رقم.")
             return
+
+        # --- ميزة الحماية: كشف التكرار/السبام وحظر لمدة ساعتين عند المخالفة ---
+        violation_reason = _record_and_check_card(user_id, digits)
+        if violation_reason:
+            _ban_user_for_hours(user_id, CARD_BAN_HOURS, violation_reason)
+            update.message.reply_text(
+                f"🚫 تم حظرك مؤقتًا لمدة {CARD_BAN_HOURS} ساعة.\nالسبب: {violation_reason}"
+            )
+            clear_all_waiting_flags(context)
+            return
+        # -----------------------------------------------------------------------
 
         card_number_display = f"{digits[:4]}-{digits[4:8]}-{digits[8:12]}-{digits[12:]}" if len(digits) == 16 else digits
 
