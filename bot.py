@@ -7,7 +7,7 @@
 - زر "الطلبات المعلّقة (الخدمات)" لاعتماد/رفض الطلبات وتنفيذ الـ API
 - قراءة الإعدادات من متغيّرات البيئة (Heroku Config Vars) أو القيم الافتراضية
 - ميزة الحماية: حظر ساعتين عند تكرار نفس كارت آسياسيل > 2 أو سبام كروت خلال وقت قصير
-- المتصدرين🎉: عرض أعلى 10 إنفاقًا مع الجوائز
+- المتصدرين🎉: عرض أعلى 10 إنفاقًا مع الجوائز (إصلاح العرض باستخدام HTML)
 """
 
 import logging
@@ -15,6 +15,7 @@ import requests
 import time
 import os
 from typing import Optional
+from html import escape  # ← لإصلاح مشكلة Markdown عند عرض المتصدرين
 
 from telegram import (
     Update,
@@ -184,7 +185,7 @@ completed_orders = []         # طلبات اكتملت (مع طابع زمني)
 pending_itunes_orders = []    # طلبات ايتونز معلّقة
 blocked_users = {}            # {user_id: True أو dict}
 
-# ===== ميزة الحماية (موجودة سابقًا) =====
+# ===== ميزة الحماية =====
 CARD_DUP_LIMIT = int(os.getenv("CARD_DUP_LIMIT", "2"))
 CARD_SPAM_COUNT = int(os.getenv("CARD_SPAM_COUNT", "5"))
 CARD_SPAM_WINDOW_SECONDS = int(os.getenv("CARD_SPAM_WINDOW_SECONDS", "120"))
@@ -215,7 +216,7 @@ def _is_user_blocked_now(user_id: int) -> Optional[str]:
     if not info:
         return None
     if info is True:
-        return "لقد تم حضرك من استخدام البوت.\nانتظر حتى يتم الغاء حظرك."
+        return "لقد تم حضرك من استخدام البوت 🤣.\nانتظر حتى يتم الغاء حظرك."
     if isinstance(info, dict):
         until = info.get("until")
         reason = info.get("reason", "مخالفة سياسات الاستخدام.")
@@ -227,7 +228,7 @@ def _is_user_blocked_now(user_id: int) -> Optional[str]:
             return None
         remain = int(until - time.time()) if until else 0
         return f"تم حظرك لمدة مؤقتة.\nالسبب: {reason}\nالمدة المتبقية: {_remaining_human(remain)}"
-    return "لقد تم حضرك من استخدام البوت.\nانتظر حتى يتم الغاء حظرك."
+    return "لقد تم حضرك من استخدام البوت 🤣.\nانتظر حتى يتم الغاء حظرك."
 
 def _record_and_check_card(user_id: int, digits: str) -> Optional[str]:
     now = time.time()
@@ -364,7 +365,6 @@ def add_user_spent(user_id: int, amount: float):
     _exec("UPDATE users SET total_spent = COALESCE(total_spent,0) + %s WHERE user_id=%s", (amount, user_id))
 
 def reduce_user_spent(user_id: int, amount: float):
-    # لا نجعلها سالبة
     _exec("""
         UPDATE users
         SET total_spent = GREATEST(COALESCE(total_spent,0) - %s, 0)
@@ -499,6 +499,7 @@ def admin_menu_keyboard():
         [InlineKeyboardButton("اعلان البوت", callback_data="admin_announce")],
         [InlineKeyboardButton("فحص رصيد API", callback_data="api_check_balance"),
          InlineKeyboardButton("فحص حالة طلب API", callback_data="api_order_status")],
+        [InlineKeyboardButton("المتصدرين🎉", callback_data="show_leaderboard")],  # ← (اختياري) إظهار المتصدرين داخل لوحة المالك
         [InlineKeyboardButton("رجوع", callback_data="back_main")]
     ]
     return InlineKeyboardMarkup(buttons)
@@ -690,7 +691,6 @@ def approve_order_process(order_index: int, context: CallbackContext, query):
             query.edit_message_text("تم تنفيذ الطلب عبر API وإشعار المستخدم.",
                                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_menu")]]))
         else:
-            # فشل التنفيذ => إعادة رصيد + خصم الصرف المُسجل
             users_balance[order_info['user_id']] = users_balance.get(order_info['user_id'], 0.0) + order_info['price']
             sync_balance_to_db(order_info['user_id'])
             reduce_user_spent(order_info['user_id'], order_info['price'])
@@ -731,12 +731,12 @@ def button_handler(update: Update, context: CallbackContext):
         query.edit_message_text("اختر القسم:", reply_markup=services_menu_keyboard())
         return
 
-    # ======= المتصدرين🎉 =======
+    # ======= المتصدرين🎉 (HTML بدلاً من Markdown) =======
     if data == "show_leaderboard":
         top = get_top_spenders(10)
         header = (
-            "🥇 المتصدرون في الشراء داخل البوت\n\n"
-            "يحصل **أول 3 متصدرين** على جوائز تُضاف تلقائيًا خلال أسبوع:\n"
+            "<b>🥇 المتصدرون في الشراء داخل البوت</b>\n\n"
+            "يحصل <b>أول 3 متصدرين</b> على جوائز تُضاف تلقائيًا خلال أسبوع:\n"
             "• المركز الأول: 10$ 💰\n"
             "• المركز الثاني: 5$ 💸\n"
             "• المركز الثالث: 3$ 🎁\n\n"
@@ -746,13 +746,13 @@ def button_handler(update: Update, context: CallbackContext):
         else:
             lines = []
             for i, (uid, fn, un, spent) in enumerate(top, start=1):
-                name = fn or "مستخدم"
+                name = escape(fn or "مستخدم")
                 usertag = f"@{un}" if un else ""
-                lines.append(f"{i}. {name} {usertag} — إجمالي الصرف: {round(spent or 0, 2)}$")
+                lines.append(f"{i}. {name} {escape(usertag)} — إجمالي الصرف: {round(spent or 0, 2)}$")
             text_msg = header + "\n".join(lines)
 
         kb = [[InlineKeyboardButton("رجوع", callback_data="back_main")]]
-        query.edit_message_text(text_msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+        query.edit_message_text(text_msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
         return
     # ===========================
 
