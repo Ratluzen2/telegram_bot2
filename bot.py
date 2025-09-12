@@ -2,9 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
-بوت تلغرام متكامل + إضافات إدارة المشرفين والخصومات (كما طلبت)
-- لا تغيّر أي شيء حسّاس قبل التشغيل: استبدل TOKEN/ADMIN_ID/API_KEY بما يناسبك.
-- يعتمد على python-telegram-bot v13.x
+بوت تلغرام متكامل + إدارة المشرفين + خصومات للمشرف + إصلاح الإشعارات والأزرار
+- متوافق مع python-telegram-bot v13.x
+- استبدل ADMIN_ID و TOKEN بقيمك قبل التشغيل
 """
 
 import logging
@@ -40,8 +40,8 @@ logger = logging.getLogger("TG_BOT")
 # =========================
 # إعداد المتغيرات العامة
 # =========================
-ADMIN_ID = 7655504656                 # ← غيّر آيدي المالك
-TOKEN = "8138615524:AAFr6m5Z4_gY0k7pdg7teD9nM8ReDC-KQKU"     # ← لا تستعمل توكن حقيقي علناً
+ADMIN_ID = 1234567890               # ← غيّر آيدي المالك
+TOKEN = "8138615524:AAFr6m5Z4_gY0k7pdg7teD9nM8ReDC-KQKU"   # ← ضع توكن البوت هنا (لا تنشره علنًا)
 API_KEY = "3e4f5503764fa06793da9a76d24d65a4"
 API_URL = "https://kd1s.com/api/v2"
 
@@ -168,18 +168,18 @@ telegram_services = {
 }
 
 # =========================
-# المتغيرات الخاصة بالطلبات والرصيد
+# المتغيرات والذاكرة
 # =========================
 users_balance = {}            # {user_id: balance}
-pending_orders = []           # قائمة الطلبات المعلقة العادية
-pending_cards = []            # كروت الشحن المعلقة
-pending_pubg_orders = []      # شدات ببجي المعلقة
-completed_orders = []         # الطلبات المكتملة (مع طابع زمني)
-pending_itunes_orders = []    # طلبات ايتونز المعلقة
-blocked_users = {}            # المحظورون: {user_id: True}
+pending_orders = []           # طلبات معلقة (روابط خدمات)
+pending_cards = []            # كروت شحن معلقة
+pending_pubg_orders = []      # طلبات ببجي معلقة
+completed_orders = []         # طلبات اكتملت (مع طابع زمني)
+pending_itunes_orders = []    # طلبات ايتونز معلقة
+blocked_users = {}            # {user_id: True}
 
 # =========================
-# إعداد قاعدة بيانات SQLite
+# قاعدة البيانات SQLite
 # =========================
 DB_FILE = "bot_database.db"
 conn = sqlite3.connect(DB_FILE, check_same_thread=False)
@@ -205,7 +205,6 @@ for col_name, col_def in required_columns.items():
         cursor.execute(f"ALTER TABLE users ADD COLUMN {col_name} {col_def}")
         conn.commit()
 
-# جدول المشرفين
 cursor.execute("""
     CREATE TABLE IF NOT EXISTS moderators (
         user_id INTEGER PRIMARY KEY,
@@ -216,7 +215,7 @@ cursor.execute("""
 conn.commit()
 
 # =========================
-# دوال قاعدة البيانات والمستخدمين
+# دوال DB والمستخدمين
 # =========================
 def get_user_from_db(user_id: int):
     cursor.execute("SELECT user_id, full_name, username, balance FROM users WHERE user_id=?", (user_id,))
@@ -249,10 +248,7 @@ def get_users_with_balance_desc():
 
 def sync_balance_from_db(user_id: int):
     row = get_user_from_db(user_id)
-    if row:
-        users_balance[user_id] = row[3]
-    else:
-        users_balance[user_id] = users_balance.get(user_id, 0.0)
+    users_balance[user_id] = row[3] if row else users_balance.get(user_id, 0.0)
 
 def sync_balance_to_db(user_id: int):
     bal = users_balance.get(user_id, 0.0)
@@ -423,55 +419,59 @@ def clear_all_waiting_flags(context: CallbackContext):
         context.user_data.pop(key, None)
 
 # =========================
-# النظام الجديد للإعلان (يدعم وسائط)
+# نظام الإعلان (يدعم وسائط)
 # =========================
 def broadcast_ad(update: Update, context: CallbackContext):
     announcement_prefix = "✨ إعلان من مالك البوت ✨\n\n"
     all_users = get_all_users()
     admin_reply = "تم إرسال الإعلان لجميع المستخدمين."
 
-    if update.message.photo:
-        file_id = update.message.photo[-1].file_id
-        caption = update.message.caption or ""
-        new_caption = announcement_prefix + caption
-        for usr in all_users:
-            try:
-                context.bot.send_photo(chat_id=usr[0], photo=file_id, caption=new_caption)
-            except Exception as e:
-                logger.error("Error sending photo to %s: %s", usr[0], e)
-        update.message.reply_text(admin_reply)
+    try:
+        if update.message.photo:
+            file_id = update.message.photo[-1].file_id
+            caption = update.message.caption or ""
+            new_caption = announcement_prefix + caption
+            for usr in all_users:
+                try:
+                    context.bot.send_photo(chat_id=usr[0], photo=file_id, caption=new_caption)
+                except Exception as e:
+                    logger.error("Error sending photo to %s: %s", usr[0], e)
+            update.message.reply_text(admin_reply)
 
-    elif update.message.video:
-        file_id = update.message.video.file_id
-        caption = update.message.caption or ""
-        new_caption = announcement_prefix + caption
-        for usr in all_users:
-            try:
-                context.bot.send_video(chat_id=usr[0], video=file_id, caption=new_caption)
-            except Exception as e:
-                logger.error("Error sending video to %s: %s", usr[0], e)
-        update.message.reply_text(admin_reply)
+        elif update.message.video:
+            file_id = update.message.video.file_id
+            caption = update.message.caption or ""
+            new_caption = announcement_prefix + caption
+            for usr in all_users:
+                try:
+                    context.bot.send_video(chat_id=usr[0], video=file_id, caption=new_caption)
+                except Exception as e:
+                    logger.error("Error sending video to %s: %s", usr[0], e)
+            update.message.reply_text(admin_reply)
 
-    elif update.message.voice:
-        file_id = update.message.voice.file_id
-        for usr in all_users:
-            try:
-                context.bot.send_message(chat_id=usr[0], text=announcement_prefix)
-                context.bot.send_voice(chat_id=usr[0], voice=file_id)
-            except Exception as e:
-                logger.error("Error sending voice to %s: %s", usr[0], e)
-        update.message.reply_text(admin_reply)
+        elif update.message.voice:
+            file_id = update.message.voice.file_id
+            for usr in all_users:
+                try:
+                    context.bot.send_message(chat_id=usr[0], text=announcement_prefix)
+                    context.bot.send_voice(chat_id=usr[0], voice=file_id)
+                except Exception as e:
+                    logger.error("Error sending voice to %s: %s", usr[0], e)
+            update.message.reply_text(admin_reply)
 
-    elif update.message.text:
-        text_to_send = announcement_prefix + update.message.text
-        for usr in all_users:
-            try:
-                context.bot.send_message(chat_id=usr[0], text=text_to_send)
-            except Exception as e:
-                logger.error("Error sending text to %s: %s", usr[0], e)
-        update.message.reply_text(admin_reply)
-    else:
-        update.message.reply_text("نوع الرسالة غير مدعوم.")
+        elif update.message.text:
+            text_to_send = announcement_prefix + update.message.text
+            for usr in all_users:
+                try:
+                    context.bot.send_message(chat_id=usr[0], text=text_to_send)
+                except Exception as e:
+                    logger.error("Error sending text to %s: %s", usr[0], e)
+            update.message.reply_text(admin_reply)
+        else:
+            update.message.reply_text("نوع الرسالة غير مدعوم في البث.")
+    except Exception as e:
+        logger.error("broadcast_ad error: %s", e)
+        update.message.reply_text("تعذّر إرسال البث حالياً.")
 
 # =========================
 # دالة البداية (start)
@@ -517,9 +517,6 @@ def api_check_balance(update: Update, context: CallbackContext):
 # تنفيذ طلب مع API عند الموافقة
 # =========================
 def approve_order_process(order_index: int, context: CallbackContext, query):
-    """
-    يأخذ طلب من pending_orders ويحاول تنفيذه عبر API ثم ينقله إلى completed_orders
-    """
     try:
         order_info = pending_orders.pop(order_index)
     except IndexError:
@@ -552,15 +549,22 @@ def approve_order_process(order_index: int, context: CallbackContext, query):
                 chat_id=order_info['user_id'],
                 text=f"تم استلام طلبك وسوف يتم تنفيذه قريباً\nرقم طلبك ({api_response['order']})"
             )
-            query.edit_message_text("تم تنفيذ الطلب عبر API وإشعار المستخدم.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_pending_orders")]]))
+            query.edit_message_text(
+                "تم تنفيذ الطلب عبر API وإشعار المستخدم.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_pending_orders")]])
+            )
         else:
-            # فشل التنفيذ → إعادة المبلغ
             users_balance[order_info['user_id']] = users_balance.get(order_info['user_id'], 0.0) + order_info['price']
             sync_balance_to_db(order_info['user_id'])
-            context.bot.send_message(chat_id=order_info['user_id'], text="فشل تنفيذ الطلب عبر النظام الخارجي، تمت إعادة المبلغ لرصيدك.")
-            query.edit_message_text("فشل تنفيذ الطلب عبر API وتمت إعادة الرصيد للمستخدم.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_pending_orders")]]))
+            context.bot.send_message(
+                chat_id=order_info['user_id'],
+                text="فشل تنفيذ الطلب عبر النظام الخارجي، تمت إعادة المبلغ لرصيدك."
+            )
+            query.edit_message_text(
+                "فشل تنفيذ الطلب عبر API وتمت إعادة الرصيد للمستخدم.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_pending_orders")]])
+            )
     else:
-        # خدمة غير مدموجة مع API (إكمال داخلي)
         order_info["order_number"] = "N/A"
         order_info["service_number"] = "N/A"
         order_info["refunded"] = False
@@ -580,22 +584,19 @@ def button_handler(update: Update, context: CallbackContext):
 
     clear_all_waiting_flags(context)
 
-    # حظر
     if user_id in blocked_users and user_id != ADMIN_ID:
         query.answer("لقد تم حضرك من استخدام البوت 🤣.", show_alert=True)
         return
 
-    # رجوع للقائمة الرئيسية
     if data == "back_main":
         query.edit_message_text("القائمة الرئيسية:", reply_markup=main_menu_keyboard(user_id))
         return
 
-    # عرض الخدمات
     if data == "show_services":
         query.edit_message_text("اختر القسم:", reply_markup=services_menu_keyboard())
         return
 
-    # ======= قوائم المستخدم/المشرف بأسعار مخصومة للمشرف =======
+    # ======= عرض الأقسام بأسعار المشرفين =======
     if data == "show_followers":
         followers_services = {k: v for k, v in services_dict.items() if "متابعين" in k}
         service_buttons = []
@@ -674,7 +675,6 @@ def button_handler(update: Update, context: CallbackContext):
             query.edit_message_text("رصيدك ليس كافياً.", reply_markup=InlineKeyboardMarkup(buttons))
             return
 
-        # توجيه حسب نوع الخدمة
         if "انستغرام" in service_name:
             message_text = (
                 "الرجاء إرسال رابط الخدمة الخاص بك\n"
@@ -855,7 +855,7 @@ def button_handler(update: Update, context: CallbackContext):
             query.edit_message_text(text_msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_menu")]]))
             return
 
-        # الطلبات المكتملة عبر API (للتنبيهات/الاسترجاع)
+        # الطلبات المكتملة عبر API
         if data == "review_orders":
             filtered = [(i, o) for i, o in enumerate(completed_orders) if o.get("order_number", "N/A") != "N/A"]
             if not filtered:
@@ -1241,7 +1241,6 @@ def handle_messages(update: Update, context: CallbackContext):
         return
 
     # --- أوضاع المالك ---
-    # إضافة رصيد: اختيار المستخدم
     if user_id == ADMIN_ID and context.user_data.get("waiting_for_add_balance_user_id"):
         target_input = text.strip()
         try:
@@ -1249,7 +1248,7 @@ def handle_messages(update: Update, context: CallbackContext):
         except ValueError:
             found_user = None
             for usr in get_all_users():
-                if usr[2] and usr[2].lower() == _normalize_username(target_input).lower():
+                if usr[2] and usr[2].lower() == (_normalize_username(target_input) or "").lower():
                     found_user = usr
                     break
             if not found_user:
@@ -1262,7 +1261,6 @@ def handle_messages(update: Update, context: CallbackContext):
         update.message.reply_text("أرسل الآن المبلغ المراد إضافته إلى رصيد المستخدم:")
         return
 
-    # إضافة رصيد: مقدار المبلغ
     if user_id == ADMIN_ID and context.user_data.get("waiting_for_add_balance_amount"):
         try:
             amount = float(text.strip())
@@ -1276,7 +1274,6 @@ def handle_messages(update: Update, context: CallbackContext):
         clear_all_waiting_flags(context)
         return
 
-    # خصم رصيد: اختيار المستخدم
     if user_id == ADMIN_ID and context.user_data.get("waiting_for_discount_user_id"):
         target_input = text.strip()
         try:
@@ -1284,7 +1281,7 @@ def handle_messages(update: Update, context: CallbackContext):
         except ValueError:
             found_user = None
             for usr in get_all_users():
-                if usr[2] and usr[2].lower() == _normalize_username(target_input).lower():
+                if usr[2] and usr[2].lower() == (_normalize_username(target_input) or "").lower():
                     found_user = usr
                     break
             if not found_user:
@@ -1297,7 +1294,6 @@ def handle_messages(update: Update, context: CallbackContext):
         update.message.reply_text("أرسل الآن المبلغ المراد خصمه من رصيد المستخدم:")
         return
 
-    # خصم رصيد: مقدار المبلغ
     if user_id == ADMIN_ID and context.user_data.get("waiting_for_discount_amount"):
         try:
             amount = float(text.strip())
@@ -1315,10 +1311,8 @@ def handle_messages(update: Update, context: CallbackContext):
         clear_all_waiting_flags(context)
         return
 
-    # حضر/إلغاء حضر
     if user_id == ADMIN_ID and context.user_data.get("waiting_for_block"):
         ident = text.strip()
-        # نحوله إلى آيدي من قاعدة المستخدمين إن كان يوزر
         if ident.isdigit():
             blocked_users[int(ident)] = True
             update.message.reply_text("تم حضر المستخدم.")
@@ -1326,7 +1320,7 @@ def handle_messages(update: Update, context: CallbackContext):
             uname = _normalize_username(ident)
             target = None
             for usr in get_all_users():
-                if usr[2] and _normalize_username(usr[2]).lower() == uname.lower():
+                if usr[2] and (_normalize_username(usr[2]) or "").lower() == (uname or "").lower():
                     target = usr[0]
                     break
             if target:
@@ -1337,13 +1331,12 @@ def handle_messages(update: Update, context: CallbackContext):
         clear_all_waiting_flags(context)
         return
 
-    # إعلان
     if user_id == ADMIN_ID and context.user_data.get("waiting_for_broadcast"):
+        # يدعم نص + صور + فيديو + فويس (لأننا نضيف هاندلر للوسائط أيضاً)
         broadcast_ad(update, context)
         clear_all_waiting_flags(context)
         return
 
-    # حالة طلب API
     if user_id == ADMIN_ID and context.user_data.get("waiting_for_api_order_status"):
         order_id = text.strip()
         params = {'key': API_KEY, 'action': 'status', 'order': order_id}
@@ -1351,12 +1344,11 @@ def handle_messages(update: Update, context: CallbackContext):
             response = requests.post(API_URL, data=params, timeout=20)
             js = response.json()
             update.message.reply_text(f"حالة الطلب {order_id}:\n{js}")
-        except Exception as e:
+        except Exception:
             update.message.reply_text("فشل جلب الحالة من API.")
         clear_all_waiting_flags(context)
         return
 
-    # إدارة المشرفين: إضافة
     if user_id == ADMIN_ID and context.user_data.get("waiting_for_new_mod"):
         context.user_data["waiting_for_new_mod"] = False
         target_id = None
@@ -1373,7 +1365,7 @@ def handle_messages(update: Update, context: CallbackContext):
             target_username = _normalize_username(text)
             row_match = None
             for usr in get_all_users():
-                if usr[2] and _normalize_username(usr[2]).lower() == target_username.lower():
+                if usr[2] and (_normalize_username(usr[2]) or "").lower() == (target_username or "").lower():
                     row_match = usr
                     break
             if row_match:
@@ -1391,7 +1383,6 @@ def handle_messages(update: Update, context: CallbackContext):
         update.message.reply_text(f"تمت إضافة المشرف: {full_name} (@{target_username}) - ID: {target_id}")
         return
 
-    # إدارة المشرفين: حذف
     if user_id == ADMIN_ID and context.user_data.get("waiting_for_remove_mod"):
         context.user_data["waiting_for_remove_mod"] = False
         ok = remove_moderator_by_identifier(text)
@@ -1402,13 +1393,11 @@ def handle_messages(update: Update, context: CallbackContext):
         return
 
     # --- أوضاع المستخدم/المشرف ---
-    # اختيار خدمة عامة: استقبال الرابط وخصم الرصيد
     if context.user_data.get("selected_service"):
         service_name = context.user_data.get("selected_service")
         price = float(context.user_data.get("service_price", 0))
         link = text.strip()
 
-        # خصم الرصيد
         bal = users_balance.get(user_id, 0.0)
         if bal < price:
             update.message.reply_text("رصيدك لم يعد كافياً. حاول الشحن أولاً.")
@@ -1417,7 +1406,6 @@ def handle_messages(update: Update, context: CallbackContext):
         users_balance[user_id] = round(bal - price, 2)
         sync_balance_to_db(user_id)
 
-        # إضافة للطلبات المعلقة
         pending_orders.append({
             "user_id": user_id,
             "full_name": full_name,
@@ -1432,7 +1420,6 @@ def handle_messages(update: Update, context: CallbackContext):
         clear_all_waiting_flags(context)
         return
 
-    # اختيار ببجي: استلام الآيدي وخصم
     if context.user_data.get("selected_pubg_service"):
         service_name = context.user_data.get("selected_pubg_service")
         price = float(context.user_data.get("pubg_service_price", 0))
@@ -1460,7 +1447,6 @@ def handle_messages(update: Update, context: CallbackContext):
         clear_all_waiting_flags(context)
         return
 
-    # اختيار ايتونز: تأكيد برقم 1
     if context.user_data.get("waiting_for_itunes_confirm"):
         if text.strip() == "1":
             service_name = context.user_data.get("selected_itunes_service")
@@ -1484,14 +1470,11 @@ def handle_messages(update: Update, context: CallbackContext):
             })
 
             update.message.reply_text("✅ تم استلام طلب ايتونز. سيتم إرسال الكود لك قريباً.", reply_markup=main_menu_keyboard(user_id))
-            clear_all_waiting_flags(context)
-            return
         else:
             update.message.reply_text("تم إلغاء العملية.")
-            clear_all_waiting_flags(context)
-            return
+        clear_all_waiting_flags(context)
+        return
 
-    # إرسال كود ايتونز من المالك للمستخدم
     if user_id == ADMIN_ID and context.user_data.get("waiting_for_itunes_code"):
         itunes_order = context.user_data.get("itunes_to_complete")
         idx = context.user_data.get("itunes_to_complete_index")
@@ -1511,13 +1494,11 @@ def handle_messages(update: Update, context: CallbackContext):
         clear_all_waiting_flags(context)
         return
 
-    # خدمات تلغرام: استقبال رابط الدعوة
     if context.user_data.get("waiting_for_telegram_link"):
         service_name = context.user_data.get("selected_telegram_service")
         price = float(context.user_data.get("telegram_service_price", 0))
         invite_link = text.strip()
 
-        # تحقق بسيط من الرابط
         if "t.me/" not in invite_link:
             update.message.reply_text("الرجاء إرسال رابط دعوة صحيح مثل: https://t.me/+xxxxx")
             return
@@ -1545,7 +1526,6 @@ def handle_messages(update: Update, context: CallbackContext):
         clear_all_waiting_flags(context)
         return
 
-    # شحن عبر اسياسيل: استقبال رقم الكارت
     if context.user_data.get("waiting_for_card"):
         card_number = text.strip()
         pending_cards.append({
@@ -1559,11 +1539,10 @@ def handle_messages(update: Update, context: CallbackContext):
         clear_all_waiting_flags(context)
         return
 
-    # لا شيء من الحالات أعلاه: أظهر القائمة
     update.message.reply_text("اختر من القائمة:", reply_markup=main_menu_keyboard(user_id))
 
 # =========================
-# الأوامر الأساسية
+# أوامر بسيطة
 # =========================
 def help_cmd(update: Update, context: CallbackContext):
     update.message.reply_text("أرسل /start لفتح القوائم.")
@@ -1582,8 +1561,8 @@ def main():
     # أزرار
     dp.add_handler(CallbackQueryHandler(button_handler))
 
-    # رسائل
-    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_messages))
+    # رسائل (نص + وسائط) — إصلاح بثّ الإعلان للصور/الفيديو/الفويس
+    dp.add_handler(MessageHandler((Filters.text | Filters.photo | Filters.video | Filters.voice) & ~Filters.command, handle_messages))
 
     # بدء التشغيل
     updater.start_polling()
