@@ -455,7 +455,7 @@ def get_effective_price(user_id: int, service_name: str, base_price: float, kind
         in_80 = (
             "متابعين" in service_name or
             "لايكات" in service_name or
-            "مشاهدات بث" in service_name or
+            "مشاهدات بث" in service_name أو
             "رفع سكور" in service_name or
             "نقاط تحديات" in service_name or
             kind == "telegram"
@@ -472,10 +472,10 @@ def get_effective_price(user_id: int, service_name: str, base_price: float, kind
 # لوحات المفاتيح (Keyboards)
 # =========================
 def main_menu_keyboard(user_id: int):
+    # ✅ طلبك: إزالة "المتصدرين🎉" من القائمة الرئيسية للمالك فقط
     if user_id == ADMIN_ID:
         return InlineKeyboardMarkup([
-            [InlineKeyboardButton("لوحة تحكم المالك", callback_data="admin_menu")],
-            [InlineKeyboardButton("المتصدرين🎉", callback_data="show_leaderboard")]
+            [InlineKeyboardButton("لوحة تحكم المالك", callback_data="admin_menu")]
         ])
     if is_moderator(user_id):
         return InlineKeyboardMarkup([
@@ -507,7 +507,7 @@ def admin_menu_keyboard():
         [InlineKeyboardButton("اعلان البوت", callback_data="admin_announce")],
         [InlineKeyboardButton("فحص رصيد API", callback_data="api_check_balance"),
          InlineKeyboardButton("فحص حالة طلب API", callback_data="api_order_status")],
-        [InlineKeyboardButton("المتصدرين🎉", callback_data="show_leaderboard")],
+        [InlineKeyboardButton("المتصدرين🎉", callback_data="show_leaderboard")],  # يبقى داخل لوحة التحكم
         [InlineKeyboardButton("رجوع", callback_data="back_main")]
     ]
     return InlineKeyboardMarkup(buttons)
@@ -1106,17 +1106,21 @@ def button_handler(update: Update, context: CallbackContext):
             query.edit_message_text(text_msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_menu")]]))
             return
 
+        # الطلبات المكتملة عبر API — إضافة زر حذف الطلب
         if data == "review_orders":
             filtered = [(i, o) for i, o in enumerate(completed_orders) if o.get("order_number", "N/A") != "N/A"]
             if not filtered:
                 query.edit_message_text("لا توجد طلبات تم تنفيذها عبر API.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_menu")]]))
                 return
             keyboard = []
-            text_msg = ""
+            text_msg = "الطلبات المكتملة عبر API:\n\n"
             for orig_idx, order in filtered:
                 text_msg += f"- الاسم: {order['full_name']}، الخدمة: {order['service']}، السعر: {order['price']}$، رقم الطلب: {order.get('order_number', 'N/A')}\n\n"
-                keyboard.append([InlineKeyboardButton("اشعار المستخدم", callback_data=f"notify_order_{orig_idx}")])
-                keyboard.append([InlineKeyboardButton("ارجاع الرصيد", callback_data=f"refund_order_{orig_idx}")])
+                keyboard.append([
+                    InlineKeyboardButton("اشعار المستخدم", callback_data=f"notify_order_{orig_idx}"),
+                    InlineKeyboardButton("ارجاع الرصيد", callback_data=f"refund_order_{orig_idx}"),
+                    InlineKeyboardButton("🗑️ حذف الطلب", callback_data=f"delete_order_{orig_idx}")
+                ])
             keyboard.append([InlineKeyboardButton("رجوع", callback_data="admin_menu")])
             query.edit_message_text(text_msg, reply_markup=InlineKeyboardMarkup(keyboard))
             return
@@ -1151,6 +1155,21 @@ def button_handler(update: Update, context: CallbackContext):
             context.bot.send_message(chat_id=target_id, text=f"تم استعادة رصيدك المخصوم ({refund_amount}$)")
             query.answer("تم ارجاع الرصيد.")
             query.edit_message_text("تمت العملية.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_menu")]]))
+            return
+
+        # ✅ زر حذف الطلب من القائمة المكتملة
+        if data.startswith("delete_order_"):
+            try:
+                order_index = int(data.split("_")[-1])
+                # لا نعيد الرصيد هنا، مجرد تنظيف
+                completed_orders.pop(order_index)
+            except Exception:
+                query.answer("تعذر حذف هذا الطلب.", show_alert=True)
+                return
+            query.answer("تم حذف الطلب.", show_alert=True)
+            # إعادة فتح القائمة بعد الحذف
+            query.data = "review_orders"
+            button_handler(update, context)
             return
 
         # إدارة كروت الشحن
