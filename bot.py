@@ -2,15 +2,18 @@
 # -*- coding: utf-8 -*-
 
 """
-بوت تلغرام متكامل + إدارة المشرفين + خصومات للمشرف + إصلاح الشحن عبر آسياسيل
-- متوافق مع python-telegram-bot v13.x
-- استبدل ADMIN_ID و TOKEN بقيمك قبل التشغيل
+بوت تلغرام متكامل (python-telegram-bot v13.x)
+- إدارة المشرفين + خصومات للمشرف
+- إصلاح شحن آسياسيل مع إشعار فوري للمالك
+- زر "الطلبات المعلّقة (الخدمات)" لاعتماد/رفض الطلبات وتنفيذ الـ API
+- قراءة الإعدادات من متغيّرات البيئة (Heroku Config Vars) أو القيم الافتراضية
 """
 
 import logging
 import sqlite3
 import requests
 import time
+import os
 from typing import Optional
 
 from telegram import (
@@ -37,12 +40,15 @@ logging.basicConfig(
 logger = logging.getLogger("TG_BOT")
 
 # =========================
-# إعداد المتغيرات العامة
+# الإعدادات (Environment)
 # =========================
-ADMIN_ID = 7655504656               # ← غيّر آيدي المالك
-TOKEN = "8138615524:AAFr6m5Z4_gY0k7pdg7teD9nM8ReDC-KQKU"   # ← ضع توكن البوت هنا (لا تنشره علنًا)
-API_KEY = "25a9ceb07be0d8b2ba88e70dcbe92e06"
-API_URL = "https://kd1s.com/api/v2"
+ADMIN_ID = int(os.getenv("7655504656", "0"))   # مثال: 7655504656
+TOKEN = os.getenv("8138615524:AAFr6m5Z4_gY0k7pdg7teD9nM8ReDC-KQKU", "")               # مثال: "123456:AA...."
+API_KEY = os.getenv("25a9ceb07be0d8b2ba88e70dcbe92e06", "")
+API_URL = os.getenv("https://kd1s.com/api/v2", "https://kd1s.com/api/v2")
+
+if not TOKEN or ":" not in TOKEN:
+    logger.warning("⚠️ TOKEN غير مضبوط أو غير صالح. عدّل متغير البيئة TOKEN.")
 
 # =========================
 # تعريف القواميس الخاصة بالخدمات
@@ -52,7 +58,7 @@ service_api_mapping = {
     "متابعين تيكتوك 2k": {"service_id": 13912, "quantity_multiplier": 2000},
     "متابعين تيكتوك 3k": {"service_id": 13912, "quantity_multiplier": 3000},
     "متابعين تيكتوك 4k": {"service_id": 13912, "quantity_multiplier": 4000},
-    "مشاهدات تيكتوك 1k": {"service_id": 9447, "quantity_multiplier": 1000},
+    "مشاهدات تيكتوك 1k": {"service_id": 9543, "quantity_multiplier": 1000},
     "مشاهدات تيكتوك 10k": {"service_id": 9543, "quantity_multiplier": 10000},
     "مشاهدات تيكتوك 20k": {"service_id": 9543, "quantity_multiplier": 20000},
     "مشاهدات تيكتوك 30k": {"service_id": 9543, "quantity_multiplier": 30000},
@@ -88,7 +94,7 @@ service_api_mapping = {
     "رفع سكور بثك10k": {"service_id": 13125, "quantity_multiplier": 10000},
 }
 
-# الأسعار الافتراضية (للمستخدمين العاديين)
+# الأسعار الأساسية (للمستخدمين العاديين)
 services_dict = {
     "متابعين تيكتوك 1k": 3.50,
     "متابعين تيكتوك 2k": 7,
@@ -170,11 +176,11 @@ telegram_services = {
 # المتغيرات والذاكرة
 # =========================
 users_balance = {}            # {user_id: balance}
-pending_orders = []           # طلبات معلقة (روابط خدمات)
-pending_cards = []            # كروت شحن معلقة
-pending_pubg_orders = []      # طلبات ببجي معلقة
+pending_orders = []           # طلبات خدمات معلّقة (روابط)
+pending_cards = []            # كروت شحن معلّقة
+pending_pubg_orders = []      # طلبات ببجي معلّقة
 completed_orders = []         # طلبات اكتملت (مع طابع زمني)
-pending_itunes_orders = []    # طلبات ايتونز معلقة
+pending_itunes_orders = []    # طلبات ايتونز معلّقة
 blocked_users = {}            # {user_id: True}
 
 # =========================
@@ -297,7 +303,7 @@ def list_moderators():
 def get_effective_price(user_id: int, service_name: str, base_price: float, kind: str = "generic") -> float:
     """
     خصومات للمشرفين فقط:
-    - المتابعين/مشاهدات البث/اللايكات/رفع سكور/خدمات التليجرام ⇒ *0.8
+    - المتابعين/المشاهدات المباشرة/اللايكات/رفع سكور/خدمات التليجرام ⇒ *0.8
     - ايتونز/ببجي ⇒ *0.9
     """
     try:
@@ -341,8 +347,8 @@ def main_menu_keyboard(user_id: int):
     ])
 
 def admin_menu_keyboard():
-    # تمت إزالة الزر الزائد "تنفيذ الطلبات المعلقة API" لإرجاع اللوحة كما كانت أقرب للأصل
     buttons = [
+        [InlineKeyboardButton("الطلبات المعلّقة (الخدمات)", callback_data="pending_smm_orders")],
         [InlineKeyboardButton("إدارة المشرفين", callback_data="manage_mods")],
         [InlineKeyboardButton("حضر المستخدم", callback_data="block_user"),
          InlineKeyboardButton("الغاء حظر المستخدم", callback_data="unblock_user")],
@@ -409,7 +415,7 @@ def clear_all_waiting_flags(context: CallbackContext):
         "selected_itunes_service", "itunes_service_price", "waiting_for_itunes_confirm",
         "waiting_for_itunes_code", "itunes_to_complete", "itunes_to_complete_index",
         "selected_telegram_service", "telegram_service_price", "waiting_for_telegram_link",
-        "waiting_for_new_mod", "waiting_for_remove_mod"
+        "waiting_for_new_mod", "waiting_for_remove_mod", "admin_target_id"
     ]
     for key in waiting_keys:
         context.user_data.pop(key, None)
@@ -510,7 +516,7 @@ def api_check_balance(update: Update, context: CallbackContext):
         update.message.reply_text(text_msg)
 
 # =========================
-# تنفيذ طلب مع API عند الموافقة
+# تنفيذ الطلب عبر API عند الموافقة
 # =========================
 def approve_order_process(order_index: int, context: CallbackContext, query):
     try:
@@ -585,7 +591,7 @@ def button_handler(update: Update, context: CallbackContext):
         query.edit_message_text("اختر القسم:", reply_markup=services_menu_keyboard())
         return
 
-    # ======= عرض الأقسام بأسعار المشرفين =======
+    # ======= عرض الأقسام بأسعار (مع خصومات المشرف إن وُجد) =======
     if data == "show_followers":
         followers_services = {k: v for k, v in services_dict.items() if "متابعين" in k}
         service_buttons = []
@@ -777,6 +783,53 @@ def button_handler(update: Update, context: CallbackContext):
         return
 
     if user_id == ADMIN_ID:
+        # قائمة الطلبات المعلّقة (الخدمات)
+        if data == "pending_smm_orders":
+            if not pending_orders:
+                query.edit_message_text(
+                    "لا توجد طلبات خدمات معلّقة حالياً.",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_menu")]])
+                )
+            else:
+                text_msg = "الطلبات المعلّقة (الخدمات):\n\n"
+                kb = []
+                for idx, o in enumerate(pending_orders):
+                    text_msg += (f"{idx+1}) {o['full_name']} (@{o['username']})\n"
+                                 f"   الخدمة: {o['service']} | السعر: {o['price']}$\n"
+                                 f"   الرابط: {o['link']}\n\n")
+                    kb.append([
+                        InlineKeyboardButton(f"✅ تنفيذ {idx+1}", callback_data=f"approve_smm_{idx}"),
+                        InlineKeyboardButton(f"❌ رفض {idx+1}", callback_data=f"reject_smm_{idx}")
+                    ])
+                kb.append([InlineKeyboardButton("رجوع", callback_data="admin_menu")])
+                query.edit_message_text(text_msg, reply_markup=InlineKeyboardMarkup(kb))
+            return
+
+        if data.startswith("approve_smm_"):
+            try:
+                order_index = int(data.split("_")[-1])
+            except Exception:
+                query.answer("رقم طلب غير صالح.", show_alert=True)
+                return
+            approve_order_process(order_index, context, query)
+            return
+
+        if data.startswith("reject_smm_"):
+            try:
+                order_index = int(data.split("_")[-1])
+                order_info = pending_orders.pop(order_index)
+            except Exception:
+                query.answer("تعذر إيجاد الطلب.", show_alert=True)
+                return
+            users_balance[order_info['user_id']] = users_balance.get(order_info['user_id'], 0.0) + float(order_info['price'])
+            sync_balance_to_db(order_info['user_id'])
+            try:
+                context.bot.send_message(chat_id=order_info['user_id'], text="تم إلغاء طلبك وإعادة المبلغ إلى رصيدك.")
+            except Exception:
+                pass
+            query.edit_message_text("تم رفض الطلب وإرجاع الرصيد.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="pending_smm_orders")]]))
+            return
+
         if data == "block_user":
             query.edit_message_text("أرسل اليوزرنيم أو الآيدي للمستخدم الذي تريد حضره:")
             context.user_data["waiting_for_block"] = True
@@ -1400,7 +1453,7 @@ def handle_messages(update: Update, context: CallbackContext):
         clear_all_waiting_flags(context)
         return
 
-    # ======== إدخال مبلغ الشحن عند موافقة المالك (كان ناقص وتمت إضافته) ========
+    # ======== إدخال مبلغ الشحن عند موافقة المالك ========
     if user_id == ADMIN_ID and context.user_data.get("waiting_for_amount"):
         try:
             amount = float(text.strip())
@@ -1459,6 +1512,19 @@ def handle_messages(update: Update, context: CallbackContext):
             "link": link,
             "ordered_at": time.time()
         })
+
+        # إشعار المالك بوجود طلب خدمة جديد
+        try:
+            context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=(f"🆕 طلب خدمة جديد بانتظار المراجعة:\n"
+                      f"- المستخدم: {full_name} (@{username}) | ID: {user_id}\n"
+                      f"- الخدمة: {service_name} | السعر: {price}$\n"
+                      f"- الرابط: {link}"),
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("الطلبات المعلّقة (الخدمات)", callback_data="pending_smm_orders")]])
+            )
+        except Exception:
+            pass
 
         update.message.reply_text("✅ تم استلام طلبك ووضعه في قائمة المراجعة.\nسيتم التنفيذ قريباً.", reply_markup=main_menu_keyboard(user_id))
         clear_all_waiting_flags(context)
@@ -1565,6 +1631,17 @@ def handle_messages(update: Update, context: CallbackContext):
             "link": invite_link,
             "ordered_at": time.time()
         })
+
+        # إشعار المالك
+        try:
+            context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=(f"🆕 طلب خدمة تلغرام:\n- المستخدم: {full_name} (@{username}) | ID: {user_id}\n"
+                      f"- الخدمة: {service_name} | السعر: {price}$\n- الرابط: {invite_link}"),
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("الطلبات المعلّقة (الخدمات)", callback_data="pending_smm_orders")]])
+            )
+        except Exception:
+            pass
 
         update.message.reply_text("✅ تم استلام طلب خدمة التليجرام. سنباشر التنفيذ قريباً.", reply_markup=main_menu_keyboard(user_id))
         clear_all_waiting_flags(context)
