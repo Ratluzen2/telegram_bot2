@@ -686,7 +686,8 @@ def button_handler(update: Update, context: CallbackContext):
         return
 
     if data == "show_live_views":
-        live_views_services = {k: v for k, v in services_dict.items() if "مشاهدات بث" في k}
+        # ✅ إصلاح: استخدام in بدل "في"
+        live_views_services = {k: v for k, v in services_dict.items() if "مشاهدات بث" in k}
         service_buttons = []
         for name, price in live_views_services.items():
             eff = get_effective_price(user_id, name, price, "generic")
