@@ -533,11 +533,7 @@ def get_effective_price(user_id: int, service_name: str, base_price: float, kind
 def main_menu_keyboard(user_id: int):
     if user_id == ADMIN_ID:
         return InlineKeyboardMarkup([
-            [InlineKeyboardButton("لوحة تحكم المالك", callback_data="admin_menu")],
-            [InlineKeyboardButton("الخدمات", callback_data="show_services")],
-            [InlineKeyboardButton("رصيدي", callback_data="show_balance")],
-            [InlineKeyboardButton("طلباتي", callback_data="my_orders")],
-            [InlineKeyboardButton("المتصدرين🎉", callback_data="show_leaderboard")]
+        [InlineKeyboardButton("لوحة تحكم المالك", callback_data="admin_menu")]
         ])
     if is_moderator(user_id):
         return InlineKeyboardMarkup([
