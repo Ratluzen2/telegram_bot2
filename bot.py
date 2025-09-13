@@ -303,67 +303,8 @@ _exec("""CREATE TABLE IF NOT EXISTS orders (
 _exec("CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id, ordered_at DESC)")
 _exec("CREATE INDEX IF NOT EXISTS idx_orders_status_cat ON orders(status, category)")
 
-
-# =========================
-# نظام الإحالة
-# =========================
-REFERRAL_COMMISSION_USD = 0.10
-
-_exec("""CREATE TABLE IF NOT EXISTS referrals (
-    invitee_id BIGINT PRIMARY KEY,
-    inviter_id BIGINT NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    first_funding_at TIMESTAMPTZ,
-    commission_paid BOOLEAN DEFAULT FALSE,
-    commission_amount NUMERIC(10,2) DEFAULT 0.10
-)""")
-_exec("CREATE INDEX IF NOT EXISTS idx_referrals_inviter ON referrals(inviter_id)")
-
-def db_set_referral_if_new(inviter_id: int, invitee_id: int):
-    if not inviter_id or not invitee_id or inviter_id == invitee_id:
-        return
-    row = _exec("SELECT inviter_id FROM referrals WHERE invitee_id=%s", (invitee_id,), "one")
-    if row: return
-    _exec("INSERT INTO referrals (invitee_id, inviter_id, commission_amount) VALUES (%s,%s,%s)",
-          (invitee_id, inviter_id, REFERRAL_COMMISSION_USD))
-
-def db_get_referral_by_invitee(invitee_id: int):
-    return _exec("SELECT inviter_id, commission_paid, commission_amount, first_funding_at FROM referrals WHERE invitee_id=%s",
-                 (invitee_id,), "one")
-
-def db_mark_first_funding_and_pay(invitee_id: int) -> int:
-    row = db_get_referral_by_invitee(invitee_id)
-    if not row: return 0
-    inviter_id, commission_paid, commission_amount, _ = row
-    if commission_paid: return 0
-    _exec("UPDATE users SET balance = COALESCE(balance,0) + %s WHERE user_id=%s",
-          (commission_amount, inviter_id))
-    _exec("UPDATE referrals SET first_funding_at=NOW(), commission_paid=TRUE WHERE invitee_id=%s AND commission_paid=FALSE",
-          (invitee_id,))
-    try: sync_balance_from_db(inviter_id)
-    except Exception as e: logger.error("sync inviter balance failed: %s", e)
-    return inviter_id
-
-def db_get_user_ref_stats(inviter_id: int):
-    row = _exec("SELECT COUNT(*), SUM(CASE WHEN commission_paid THEN 1 ELSE 0 END), SUM(CASE WHEN NOT commission_paid THEN 1 ELSE 0 END), COALESCE(SUM(CASE WHEN commission_paid THEN commission_amount ELSE 0 END),0)                 FROM referrals WHERE inviter_id=%s", (inviter_id,), "one")
-    total, paid, pending, total_earned = row or (0,0,0,0)
-    invites = _exec("""SELECT r.invitee_id, u.full_name, u.username, r.commission_paid, r.created_at, r.first_funding_at
-                       FROM referrals r LEFT JOIN users u ON r.invitee_id=u.user_id
-                       WHERE r.inviter_id=%s ORDER BY r.created_at DESC LIMIT 10""", (inviter_id,), "all") or []
-    return {"total": total or 0, "paid": paid or 0, "pending": pending or 0, "total_earned": float(total_earned or 0), "invites": invites}
-
-def db_get_admin_ref_overview():
-    row = _exec("SELECT COUNT(*), COALESCE(SUM(CASE WHEN commission_paid THEN commission_amount ELSE 0 END),0) FROM referrals", (), "one")
-    total_refs, total_paid = row or (0,0)
-    top = _exec("""SELECT inviter_id, COUNT(*) AS cnt, SUM(CASE WHEN commission_paid THEN 1 ELSE 0 END) AS paid_cnt
-                    FROM referrals GROUP BY inviter_id ORDER BY cnt DESC LIMIT 10""", (), "all") or []
-    return {"total_refs": total_refs or 0, "total_paid": float(total_paid or 0), "top": top}
-
-
-
-
-
-# === أكواد الخدمات (Overrides) ===
+# === أكواد الخدمات (Overrides) + نظام الإحالة ===
+# جدول overrides لتعيين service_id/quantity_multiplier مخصص لكل خدمة
 _exec("""CREATE TABLE IF NOT EXISTS service_api_overrides (
     service_name TEXT PRIMARY KEY,
     service_id   TEXT,
@@ -391,6 +332,63 @@ def db_set_service_override(service_name: str, service_id: str, quantity_multipl
 def db_delete_service_override(service_name: str):
     _exec("DELETE FROM service_api_overrides WHERE service_name=%s", (service_name,))
 
+# نظام الإحالة
+REFERRAL_COMMISSION_USD = 0.10
+
+_exec("""CREATE TABLE IF NOT EXISTS referrals (
+    invitee_id BIGINT PRIMARY KEY,
+    inviter_id BIGINT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    first_funding_at TIMESTAMPTZ,
+    commission_paid BOOLEAN DEFAULT FALSE,
+    commission_amount NUMERIC(10,2) DEFAULT 0.10
+)""")
+_exec("CREATE INDEX IF NOT EXISTS idx_referrals_inviter ON referrals(inviter_id)")
+
+def db_set_referral_if_new(inviter_id: int, invitee_id: int):
+    if not inviter_id or not invitee_id or inviter_id == invitee_id:
+        return
+    row = _exec("SELECT inviter_id FROM referrals WHERE invitee_id=%s", (invitee_id,), "one")
+    if row:
+        return
+    _exec("INSERT INTO referrals (invitee_id, inviter_id, commission_amount) VALUES (%s,%s,%s)",
+          (invitee_id, inviter_id, REFERRAL_COMMISSION_USD))
+
+def db_get_referral_by_invitee(invitee_id: int):
+    return _exec("SELECT inviter_id, commission_paid, commission_amount, first_funding_at FROM referrals WHERE invitee_id=%s",
+                 (invitee_id,), "one")
+
+def db_mark_first_funding_and_pay(invitee_id: int) -> int:
+    row = db_get_referral_by_invitee(invitee_id)
+    if not row:
+        return 0
+    inviter_id, commission_paid, commission_amount, _ = row
+    if commission_paid:
+        return 0
+    _exec("UPDATE users SET balance = COALESCE(balance,0) + %s WHERE user_id=%s",
+          (commission_amount, inviter_id))
+    _exec("UPDATE referrals SET first_funding_at=NOW(), commission_paid=TRUE WHERE invitee_id=%s AND commission_paid=FALSE",
+          (invitee_id,))
+    try:
+        sync_balance_from_db(inviter_id)
+    except Exception as e:
+        logger.error("sync inviter balance failed: %s", e)
+    return inviter_id
+
+def db_get_user_ref_stats(inviter_id: int):
+    row = _exec("SELECT COUNT(*), SUM(CASE WHEN commission_paid THEN 1 ELSE 0 END), SUM(CASE WHEN NOT commission_paid THEN 1 ELSE 0 END), COALESCE(SUM(CASE WHEN commission_paid THEN commission_amount ELSE 0 END),0) FROM referrals WHERE inviter_id=%s", (inviter_id,), "one")
+    total, paid, pending, total_earned = row or (0,0,0,0)
+    invites = _exec("""SELECT r.invitee_id, u.full_name, u.username, r.commission_paid, r.created_at, r.first_funding_at
+                       FROM referrals r LEFT JOIN users u ON r.invitee_id=u.user_id
+                       WHERE r.inviter_id=%s ORDER BY r.created_at DESC LIMIT 10""", (inviter_id,), "all") or []
+    return {"total": total or 0, "paid": paid or 0, "pending": pending or 0, "total_earned": float(total_earned or 0), "invites": invites}
+
+def db_get_admin_ref_overview():
+    row = _exec("SELECT COUNT(*), COALESCE(SUM(CASE WHEN commission_paid THEN commission_amount ELSE 0 END),0) FROM referrals", (), "one")
+    total_refs, total_paid = row or (0,0)
+    top = _exec("""SELECT inviter_id, COUNT(*) AS cnt, SUM(CASE WHEN commission_paid THEN 1 ELSE 0 END) AS paid_cnt
+                    FROM referrals GROUP BY inviter_id ORDER BY cnt DESC LIMIT 10""", (), "all") or []
+    return {"total_refs": total_refs or 0, "total_paid": float(total_paid or 0), "top": top}
 
 
 
@@ -629,40 +627,34 @@ def main_menu_keyboard(user_id: int):
     if is_moderator(user_id):
         return InlineKeyboardMarkup([
             [InlineKeyboardButton("الخدمات", callback_data="show_services")],
-            [InlineKeyboardButton("رصيدي", callback_data="show_balance")],
             [InlineKeyboardButton("طلباتي", callback_data="my_orders")],
+            [InlineKeyboardButton("رصيدي", callback_data="show_balance")],
+            [InlineKeyboardButton("الإحالة", callback_data="referral_panel")],
             [InlineKeyboardButton("لوحة تحكم المشرف", callback_data="moderator_menu")],
-            [InlineKeyboardButton("المتصدرين🎉", callback_data="show_leaderboard")],
-        [InlineKeyboardButton("الإحالة", callback_data="referral_panel")]
+            [InlineKeyboardButton("المتصدرين🎉", callback_data="show_leaderboard")]
         ])
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("الخدمات", callback_data="show_services")],
-        [InlineKeyboardButton("رصيدي", callback_data="show_balance")],
         [InlineKeyboardButton("طلباتي", callback_data="my_orders")],
+        [InlineKeyboardButton("رصيدي", callback_data="show_balance")],
+        [InlineKeyboardButton("الإحالة", callback_data="referral_panel")],
         [InlineKeyboardButton("المتصدرين🎉", callback_data="show_leaderboard")]
     ])
 
 def admin_menu_keyboard():
     buttons = [
-        [InlineKeyboardButton("أكواد خدمات API", callback_data="admin_service_codes")],
-        [InlineKeyboardButton("نظام الإحالة", callback_data="admin_referrals")],
         [InlineKeyboardButton("الطلبات المعلّقة (الخدمات)", callback_data="pending_smm_orders")],
+        [InlineKeyboardButton("الكارتات المعلقة", callback_data="pending_cards")],
+        [InlineKeyboardButton("طلبات شدات ببجي", callback_data="pending_pubg_orders")],
+        [InlineKeyboardButton("طلبات شحن الايتونز", callback_data="pending_itunes_orders")],
+        [InlineKeyboardButton("إضافة الرصيد", callback_data="admin_add_balance"), InlineKeyboardButton("خصم الرصيد", callback_data="admin_discount")],
+        [InlineKeyboardButton("فحص رصيد API", callback_data="api_check_balance"), InlineKeyboardButton("فحص حالة طلب API", callback_data="api_order_status")],
+        [InlineKeyboardButton("عدد المستخدمين", callback_data="admin_users_count"), InlineKeyboardButton("رصيد المستخدمين", callback_data="admin_users_balance")],
         [InlineKeyboardButton("إدارة المشرفين", callback_data="manage_mods")],
-        [InlineKeyboardButton("حضر المستخدم", callback_data="block_user"),
-         InlineKeyboardButton("الغاء حظر المستخدم", callback_data="unblock_user")],
-        [InlineKeyboardButton("إضافة الرصيد", callback_data="admin_add_balance"),
-         InlineKeyboardButton("خصم الرصيد", callback_data="admin_discount")],
-        [InlineKeyboardButton("عدد المستخدمين", callback_data="admin_users_count"),
-         InlineKeyboardButton("رصيد المستخدمين", callback_data="admin_users_balance")],
-        [InlineKeyboardButton("مراجعة الطلبات (API مكتملة)", callback_data="review_orders"),
-         InlineKeyboardButton("الكارتات المعلقة", callback_data="pending_cards")],
-        [InlineKeyboardButton("طلبات شدات ببجي", callback_data="pending_pubg_orders"),
-         InlineKeyboardButton("طلبات شحن الايتونز", callback_data="pending_itunes_orders")],
+        [InlineKeyboardButton("حضر المستخدم", callback_data="block_user"), InlineKeyboardButton("الغاء حظر المستخدم", callback_data="unblock_user")],
         [InlineKeyboardButton("اعلان البوت", callback_data="admin_announce")],
-        [InlineKeyboardButton("فحص رصيد API", callback_data="api_check_balance"),
-         InlineKeyboardButton("فحص حالة طلب API", callback_data="api_order_status")],
-        [InlineKeyboardButton("المتصدرين🎉", callback_data="show_leaderboard")],
-        [InlineKeyboardButton("رجوع", callback_data="back_main")]
+        [InlineKeyboardButton("أكواد خدمات API", callback_data="admin_service_codes")],
+        [InlineKeyboardButton("نظام الإحالة", callback_data="admin_referrals")]
     ]
     return InlineKeyboardMarkup(buttons)
 
@@ -717,9 +709,7 @@ def clear_all_waiting_flags(context: CallbackContext):
         "selected_telegram_service", "telegram_service_price", "waiting_for_telegram_link",
         "waiting_for_new_mod", "waiting_for_remove_mod", "admin_target_id",
         "score_map",
-        "my_orders_offset"
-    ,
-        "waiting_for_bulk_service_code", "__target_services__", "__groups__"
+        "my_orders_offset", "waiting_for_bulk_service_code", "__target_services__", "__groups__"
     ]
     for key in waiting_keys:
         context.user_data.pop(key, None)
@@ -775,8 +765,10 @@ def broadcast_ad(update: Update, context: CallbackContext):
         logger.error("broadcast_ad error: %s", e)
         update.message.reply_text("تعذّر إرسال البث حالياً.")
 
+# =========================
+# دالة البداية (start)
 
-# ======= أدوات التجميع + بوابة إدخال المالك + يوزرنيم البوت =======
+# ======= أدوات التجميع + بوابة المالك + يوزرنيم البوت =======
 def _normalize_ar_text(s: str) -> str:
     s = (s or "").lower()
     rep = {"أ":"ا","إ":"ا","آ":"ا","ى":"ي","ة":"ه","ؤ":"و","ئ":"ي"}
@@ -867,35 +859,36 @@ def _get_bot_username(context: CallbackContext) -> str:
     except Exception as e: logger.error("get_me failed: %s", e)
     return "YourBot"
 
-# =========================
-# دالة البداية (start)
+
 # =========================
 def start(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
-    # إلتقاط إحالة عبر رابط البدء (deep-link)
+    clear_all_waiting_flags(context)
+
+    # إحالة عبر رابط البدء
     try:
-        text0 = update.message.text or ""
-        if text0.startswith("/start "):
-            payload = text0.split(" ", 1)[1].strip()
-            if payload.startswith("ref_"):
-                inviter_id = int(payload.replace("ref_", "").strip())
-                if inviter_id and inviter_id != user_id:
-                    db_set_referral_if_new(inviter_id, user_id)
+        _t = update.message.text or ""
+        if _t.startswith("/start "):
+            _payload = _t.split(" ", 1)[1].strip()
+            if _payload.startswith("ref_"):
+                _inv = int(_payload.replace("ref_", "").strip())
+                if _inv and _inv != user_id:
+                    existed = db_get_referral_by_invitee(user_id)
+                    if not existed:
+                        db_set_referral_if_new(_inv, user_id)
+                        try:
+                            context.bot.send_message(chat_id=_inv, text="👥 تمت إضافة إحالة جديدة عبر رابطك. سيتم دفع العمولة بعد أول شحن لصديقك.")
+                        except Exception: pass
+                        try:
+                            context.bot.send_message(chat_id=user_id, text=f"تم ربط حسابك بالمُحيل (ID:{_inv}).")
+                        except Exception: pass
     except Exception as e:
         logger.error("referral capture failed: %s", e)
-    clear_all_waiting_flags(context)
 
     ban_msg = _is_user_blocked_now(user_id)
     if ban_msg:
         update.message.reply_text(ban_msg)
         return
-
-    # أولوية: التقاط إدخال المالك لمحرر الأكواد التجميعي
-    try:
-        if _admin_text_gate(update, context):
-            return
-    except Exception as _e:
-        logger.error("admin_text_gate error: %s", _e)
 
     full_name = update.effective_user.full_name
     username = update.effective_user.username or "NoUsername"
@@ -942,10 +935,10 @@ def approve_order_process_db(order_id: int, context: CallbackContext, query):
         try:
             ov = db_get_service_override(service_name)
             if ov:
-                if ov.get("service_id"): mapping["service_id"] = ov["service_id"]
-                if ov.get("quantity_multiplier"): mapping["quantity_multiplier"] = int(ov["quantity_multiplier"])
+                if ov.get('service_id'): mapping['service_id'] = ov['service_id']
+                if ov.get('quantity_multiplier'): mapping['quantity_multiplier'] = int(ov['quantity_multiplier'])
         except Exception as _e:
-            logger.error("override read error for %s: %s", service_name, _e)
+            logger.error('override read error for %s: %s', service_name, _e)
         params = {
             'key': API_KEY,
             'action': 'add',
@@ -1005,6 +998,27 @@ def button_handler(update: Update, context: CallbackContext):
 
     if data == "back_main":
         query.edit_message_text("القائمة الرئيسية:", reply_markup=main_menu_keyboard(user_id))
+        return
+    # لوحة الإحالة للمستخدم
+    if data == "referral_panel":
+        uname = _get_bot_username(context)
+        link = f"https://t.me/{uname}?start=ref_{user_id}"
+        stats = db_get_user_ref_stats(user_id)
+        lines = [
+            "👥 نظام الإحالة\n",
+            f"🔗 رابطك: {link}",
+            f"📣 عدد المدعوين: {stats.get('total',0)}",
+            f"💸 أرباح مدفوعة: {stats.get('paid',0)} شخص = {stats.get('total_earned',0):.2f}$",
+            f"⏳ بانتظار الدفع: {stats.get('pending',0)}",
+            "", "آخر المدعوين:"
+        ]
+        for it in stats.get("invites", []):
+            iid, fn, un, paid, created_at, first_at = it
+            tag = "✅" if paid else "⏳"
+            uname2 = f"@{un}" if un and un != "NoUsername" else ""
+            lines.append(f"- {fn} {uname2} — {tag}")
+        buttons = [[InlineKeyboardButton("رجوع", callback_data="back_main")]]
+        query.edit_message_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(buttons))
         return
 
     if data == "show_services":
@@ -1270,29 +1284,7 @@ def button_handler(update: Update, context: CallbackContext):
         query.edit_message_text(f"رصيدك الحالي: {balance}$", reply_markup=InlineKeyboardMarkup(buttons))
         return
 
-    
-    # لوحة الإحالة للمستخدم
-    if data == "referral_panel":
-        uname = _get_bot_username(context)
-        link = f"https://t.me/{uname}?start=ref_{user_id}"
-        stats = db_get_user_ref_stats(user_id)
-        lines = [
-            "👥 نظام الإحالة\n",
-            f"🔗 رابطك: {link}",
-            f"📣 عدد المدعوين: {stats.get('total',0)}",
-            f"💸 أرباح مدفوعة: {stats.get('paid',0)} شخص = {stats.get('total_earned',0):.2f}$",
-            f"⏳ بانتظار الدفع: {stats.get('pending',0)}",
-            "", "آخر المدعوين:"
-        ]
-        for it in stats.get("invites", []):
-            iid, fn, un, paid, created_at, first_at = it
-            tag = "✅" if paid else "⏳"
-            uname2 = f"@{un}" if un and un != "NoUsername" else ""
-            lines.append(f"- {fn} {uname2} — {tag}")
-        buttons = [[InlineKeyboardButton("رجوع", callback_data="back_main")]]
-        query.edit_message_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(buttons))
-        return
-# زر طلباتي (صفحة قابلة للتنقل)
+    # زر طلباتي (صفحة قابلة للتنقل)
     if data == "my_orders" or data.startswith("my_orders_"):
         offset = 0
         if data == "my_orders":
@@ -1302,7 +1294,7 @@ def button_handler(update: Update, context: CallbackContext):
                 offset = int(data.split("_")[-1])
             except:
                 offset = 0
-        context.user_data["my_orders_offset"] = offset
+        context.user_data["my_orders_offset", "waiting_for_bulk_service_code", "__target_services__", "__groups__"] = offset
         total = db_count_user_orders(user_id)
         orders = db_get_user_orders(user_id, limit=10, offset=offset)
         if not orders:
@@ -1350,8 +1342,7 @@ def button_handler(update: Update, context: CallbackContext):
         return
 
     if user_id == ADMIN_ID:
-
-        # ======= محرر أكواد الخدمات (API) — تعديل جماعي بالكود فقط =======
+        # ======= محرر أكواد الخدمات (API) =======
         if data == "admin_service_codes":
             pairs = build_service_groups()
             if not pairs:
@@ -1913,6 +1904,13 @@ def handle_messages(update: Update, context: CallbackContext):
     if ban_msg:
         update.message.reply_text(ban_msg); return
 
+    # إدخال المالك لكود مجموعة الخدمات
+    try:
+        if _admin_text_gate(update, context):
+            return
+    except Exception as _e:
+        logger.error("admin_text_gate error: %s", _e)
+
     full_name = update.effective_user.full_name
     username = update.effective_user.username or "NoUsername"
     text = update.message.text or ""
@@ -1944,17 +1942,17 @@ def handle_messages(update: Update, context: CallbackContext):
         target_id = context.user_data.get("admin_target_id")
         _exec("UPDATE users SET balance = COALESCE(balance,0) + %s WHERE user_id=%s", (amount, target_id))
         sync_balance_from_db(target_id)
-        # إحالة: أول شحن للمحال
+        update.message.reply_text(f"تم إضافة {amount}$ لآيدي {target_id}.")
+        # إحالة: أول شحن
         try:
             inviter_id = db_mark_first_funding_and_pay(target_id)
             if inviter_id:
                 try: context.bot.send_message(chat_id=inviter_id, text=f"🎉 مبروك! حصلت على عمولة إحالة {REFERRAL_COMMISSION_USD}$ لأن صديقك قام بأول شحن.")
-                except Exception as e: logger.error("notify inviter failed: %s", e)
-                try: context.bot.send_message(chat_id=ADMIN_ID, text=f"🎁 تم دفع عمولة إحالة {REFERRAL_COMMISSION_USD}$ للمُحيل بعد أول شحن (إضافة رصيد) للمستخدم {target_id}.")
-                except Exception as e: logger.error("notify admin failed: %s", e)
-        except Exception as e:
-            logger.error("ref payout on admin add balance failed: %s", e)
-        update.message.reply_text(f"تم إضافة {amount}$ لآيدي {target_id}.")
+                except Exception: pass
+                try: context.bot.send_message(chat_id=ADMIN_ID, text=f"📢 دُفعت عمولة إحالة {REFERRAL_COMMISSION_USD}$ للمُحيل {inviter_id} بعد أول شحن للمحال {target_id}.")
+                except Exception: pass
+        except Exception as _e:
+            logger.error("referral payout on admin add failed: %s", _e)
         clear_all_waiting_flags(context); return
 
     if user_id == ADMIN_ID and context.user_data.get("waiting_for_discount_user_id"):
@@ -2099,18 +2097,19 @@ def handle_messages(update: Update, context: CallbackContext):
         sync_balance_from_db(target_id)
         db_approve_card(cid, amount)
         try:
-            # إحالة: أول شحن للمحال عبر آسياسيل
-            try:
-                inviter_id = db_mark_first_funding_and_pay(target_id)
-                if inviter_id:
-                    try: context.bot.send_message(chat_id=inviter_id, text=f"🎉 مبروك! حصلت على عمولة إحالة {REFERRAL_COMMISSION_USD}$ لأن صديقك شحن لأول مرة عبر آسياسيل.")
-                    except Exception as e: logger.error("notify inviter failed: %s", e)
-                    try: context.bot.send_message(chat_id=ADMIN_ID, text=f"🎁 تم دفع عمولة إحالة {REFERRAL_COMMISSION_USD}$ للمُحيل بعد أول شحن (آسياسيل) للمستخدم {target_id}.")
-                    except Exception as e: logger.error("notify admin failed: %s", e)
-            except Exception as e:
-                logger.error("ref payout on asiacell approve failed: %s", e)
             context.bot.send_message(chat_id=target_id, text=f"🎉 تم شحن رصيدك بقيمة {amount}$.")
-        except Exception as e: logger.error("Failed to notify user about topup: %s", e)
+        except Exception as e:
+            logger.error("Failed to notify user about topup: %s", e)
+        # إحالة: أول شحن عبر آسياسيل
+        try:
+            inviter_id = db_mark_first_funding_and_pay(target_id)
+            if inviter_id:
+                try: context.bot.send_message(chat_id=inviter_id, text=f"🎉 مبروك! حصلت على عمولة إحالة {REFERRAL_COMMISSION_USD}$ لأن صديقك شحن لأول مرة عبر آسياسيل.")
+                except Exception: pass
+                try: context.bot.send_message(chat_id=ADMIN_ID, text=f"📢 دُفعت عمولة إحالة {REFERRAL_COMMISSION_USD}$ للمُحيل {inviter_id} بعد أول شحن (آسياسيل) للمحال {target_id}.")
+                except Exception: pass
+        except Exception as _e:
+            logger.error("referral payout on Asiacell failed: %s", _e)
         update.message.reply_text(f"تم شحن رصيد المستخدم {card[2]} (@{card[3]}) بمبلغ {amount}$.")
         clear_all_waiting_flags(context); return
 
