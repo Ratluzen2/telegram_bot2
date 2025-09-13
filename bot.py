@@ -303,38 +303,6 @@ _exec("""CREATE TABLE IF NOT EXISTS orders (
 _exec("CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id, ordered_at DESC)")
 _exec("CREATE INDEX IF NOT EXISTS idx_orders_status_cat ON orders(status, category)")
 
-
-# === أكواد الخدمات (Overrides) ===
-_exec("""CREATE TABLE IF NOT EXISTS service_api_overrides (
-    service_name TEXT PRIMARY KEY,
-    service_id   TEXT,
-    quantity_multiplier INTEGER
-)""")
-
-def db_get_service_override(service_name: str):
-    row = _exec("SELECT service_id, quantity_multiplier FROM service_api_overrides WHERE service_name=%s",
-                (service_name,), "one")
-    if not row:
-        return None
-    return {"service_id": row[0], "quantity_multiplier": row[1]}
-
-def db_set_service_override(service_name: str, service_id: str, quantity_multiplier: int = None):
-    qm = quantity_multiplier
-    if qm is None:
-        base = service_api_mapping.get(service_name) or {}
-        qm = int(base.get("quantity_multiplier", 1000))
-    _exec("""INSERT INTO service_api_overrides (service_name, service_id, quantity_multiplier)
-             VALUES (%s,%s,%s)
-             ON CONFLICT(service_name) DO UPDATE
-             SET service_id=EXCLUDED.service_id, quantity_multiplier=EXCLUDED.quantity_multiplier""",
-          (service_name, str(service_id), int(qm)))
-
-def db_delete_service_override(service_name: str):
-    _exec("DELETE FROM service_api_overrides WHERE service_name=%s", (service_name,))
-
-
-
-
 # =========================
 # دوال DB: المستخدمين والرصيد
 # =========================
@@ -658,7 +626,8 @@ def clear_all_waiting_flags(context: CallbackContext):
         "score_map",
         "my_orders_offset"
     ,
-        "waiting_for_edit_service_code", "edit_service_name"]
+        "waiting_for_bulk_service_code", "__target_services__", "__groups__"
+    ]
     for key in waiting_keys:
         context.user_data.pop(key, None)
 
@@ -714,47 +683,96 @@ def broadcast_ad(update: Update, context: CallbackContext):
         update.message.reply_text("تعذّر إرسال البث حالياً.")
 
 
-def _parse_service_edit_payload(s: str):
-    s = (s or "").strip().replace(" ", "")
-    if not s:
-        return None, None
-    if "," in s:
-        a, b = s.split(",", 1)
-        try:
-            return str(a), int(b)
-        except Exception:
-            try:
-                return str(a), int(float(b))
-            except Exception:
-                return str(a), None
-    return str(s), None
+# ======= أدوات التجميع للخدمات =======
+def _normalize_ar_text(s: str) -> str:
+    s = (s or "").lower()
+    rep = {"أ":"ا","إ":"ا","آ":"ا","ى":"ي","ة":"ه","ؤ":"و","ئ":"ي"}
+    for k,v in rep.items():
+        s = s.replace(k, v)
+    return s
+
+_PLAT_KEYWORDS = {
+    "tiktok": ["tiktok","تيك","تيكتوك","تك توك","تيك توك"],
+    "instagram": ["instagram","انست","انستا","انستغرام","الانستا"],
+    "youtube": ["youtube","يوتيوب"],
+    "telegram": ["telegram","تليجرام","تلي","تليغرام"],
+    "facebook": ["facebook","فيس","فيسبوك"],
+    "x": ["x","تويتر","twitter","تويتر اكس"],
+    "snapchat": ["snap","سناب","سناب شات"],
+    "twitch": ["twitch","تويتش"],
+}
+
+_TYPE_KEYWORDS = {
+    "مشاهدات": ["مشاهده","مشاهدات","view","views","مشاهدات بث"],
+    "متابعين": ["متابع","متابعين","followers","فولو"],
+    "لايكات": ["لايك","لايكات","like","likes","اعجابات","اعجاب"],
+    "تعليقات": ["تعليق","تعليقات","comments","كومنت"],
+    "ساعات مشاهدة": ["ساعات","watch time","ساعات مشاهده"],
+    "مشتركين": ["مشترك","مشتركين","subscribers","subs"],
+}
+
+def _detect_platform_and_type(service_name: str):
+    n = _normalize_ar_text(service_name)
+    plat = "أخرى"; typ = "أخرى"
+    for p, keys in _PLAT_KEYWORDS.items():
+        if any(k in n for k in keys): plat = p; break
+    for t, keys in _TYPE_KEYWORDS.items():
+        if any(k in n for k in keys): typ = t; break
+    return plat, typ
+
+def build_service_groups():
+    groups = {}
+    for name in service_api_mapping.keys():
+        plat, typ = _detect_platform_and_type(name)
+        if plat == "أخرى" and typ == "أخرى":
+            key = "أخرى"
+        elif typ == "أخرى":
+            key = f"أخرى {plat}"
+        elif plat == "أخرى":
+            key = f"{typ}"
+        else:
+            key = f"{typ} {plat}"
+        groups.setdefault(key, []).append(name)
+    ordered = sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+    return ordered
+
+# ======= بوابة نصوص المالك (كود واحد لكل مجموعة) =======
+def _parse_service_code_only(s: str):
+    s = (s or "").strip()
+    import re as _re
+    m = _re.search(r"\d+", s)
+    if not m: return None
+    return m.group(0)
 
 def _admin_text_gate(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     if user_id != ADMIN_ID:
         return False
 
-    if context.user_data.get("waiting_for_edit_service_code"):
-        service_name = context.user_data.get("edit_service_name")
+    if context.user_data.get("waiting_for_bulk_service_code"):
+        target_services = context.user_data.get("__target_services__") or []
         payload = update.message.text or ""
-        sid, qty = _parse_service_edit_payload(payload)
-        if not service_name or not sid:
-            update.message.reply_text("تنسيق غير صحيح. أعد المحاولة أو اضغط رجوع من القائمة.")
+        sid = _parse_service_code_only(payload)
+        if not sid:
+            update.message.reply_text("رجاءً أرسل رقم كود الـAPI فقط (مثل 13912).")
             return True
         try:
-            db_set_service_override(service_name, sid, qty)
-            context.user_data.pop("waiting_for_edit_service_code", None)
-            context.user_data.pop("edit_service_name", None)
-            update.message.reply_text(
-                f"تم حفظ التعديلات ✅\nالخدمة: {service_name}\nservice_id={sid}\nquantity={qty if qty is not None else '(بدون تغيير)'}",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_service_codes")]])
-            )
+            count = 0
+            for srv in target_services:
+                try:
+                    db_set_service_override(srv, sid, None)
+                    count += 1
+                except Exception as e:
+                    logger.error("bulk set override failed for %s: %s", srv, e)
+            context.user_data.pop("waiting_for_bulk_service_code", None)
+            context.user_data.pop("__target_services__", None)
+            update.message.reply_text(f"تم تعيين الكود {sid} لعدد {count} خدمة داخل المجموعة ✅",
+                                      reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_service_codes")]]))
         except Exception as e:
             update.message.reply_text(f"تعذر الحفظ: {e}")
         return True
 
     return False
-
 
 # =========================
 # دالة البداية (start)
@@ -809,16 +827,7 @@ def approve_order_process_db(order_id: int, context: CallbackContext, query):
     _, uid, fn, un, cat, service_name, price, link = row
 
     if service_name in service_api_mapping:
-        mapping = service_api_mapping[service_name].copy()
-        try:
-            ov = db_get_service_override(service_name)
-            if ov:
-                if ov.get("service_id"):
-                    mapping["service_id"] = ov["service_id"]
-                if ov.get("quantity_multiplier"):
-                    mapping["quantity_multiplier"] = int(ov["quantity_multiplier"])
-        except Exception as _e:
-            logger.error("override read error for %s: %s", service_name, _e)
+        mapping = service_api_mapping[service_name]
         params = {
             'key': API_KEY,
             'action': 'add',
@@ -1201,43 +1210,41 @@ def button_handler(update: Update, context: CallbackContext):
         return
 
     if user_id == ADMIN_ID:
-        # ======= محرر أكواد الخدمات (API) =======
+
+        # ======= محرر أكواد الخدمات (API) — تعديل جماعي بالكود فقط =======
         if data == "admin_service_codes":
-            lines = ["🛠️ محرر أكواد الخدمات (API)\n",
-                     "اختر خدمة لتعديل كودها (service_id) أو الكمية الافتراضية:"]
+            pairs = build_service_groups()
+            if not pairs:
+                query.edit_message_text("لا توجد خدمات معرّفة حالياً.")
+                return
             kb = []
-            names = list(service_api_mapping.keys())
-            for idx, name in enumerate(names):
-                mapping = service_api_mapping.get(name, {})
-                ov = db_get_service_override(name)
-                sid = (ov or {}).get("service_id") or mapping.get("service_id", "-")
-                qty = (ov or {}).get("quantity_multiplier") or mapping.get("quantity_multiplier", "-")
-                lines.append(f"- {name} • service_id: {sid} • qty: {qty}")
-                kb.append([InlineKeyboardButton(f"تعديل: {name}", callback_data=f"edit_srvcode_{idx}")])
+            display = ["🛠️ اختر مجموعة لتعديل كود الـAPI لها (أرسل رقمًا واحدًا فقط):\n"]
+            names = []
+            for idx, (gname, services) in enumerate(pairs):
+                names.append((gname, services))
+                display.append(f"{idx+1}) {gname} — {len(services)} خدمة")
+                kb.append([InlineKeyboardButton(f"تعديل: {gname}", callback_data=f"edit_group_{idx}")])
             kb.append([InlineKeyboardButton("رجوع", callback_data="admin_menu")])
-            context.user_data["__svc_list__"] = names
-            query.edit_message_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(kb))
+            context.user_data["__groups__"] = names
+            query.edit_message_text("\n".join(display), reply_markup=InlineKeyboardMarkup(kb))
             return
 
-        if data.startswith("edit_srvcode_"):
-            if user_id != ADMIN_ID:
-                query.answer("غير مسموح.", show_alert=True); return
+        if data.startswith("edit_group_"):
             try:
                 idx = int(data.split("_")[-1])
             except Exception:
                 query.answer("خطأ في الفهرس.", show_alert=True); return
-            names = context.user_data.get("__svc_list__") or list(service_api_mapping.keys())
-            if idx < 0 or idx >= len(names):
+            groups = context.user_data.get("__groups__")
+            pairs = groups if groups else build_service_groups()
+            if idx < 0 or idx >= len(pairs):
                 query.answer("العنصر غير موجود.", show_alert=True); return
-            target = names[idx]
-            context.user_data["edit_service_name"] = target
-            context.user_data["waiting_for_edit_service_code"] = True
-            txt = (f"📝 تعديل كود خدمة:\nالخدمة: {target}\n\n"
-                   f"أرسل القيمة بهذا الشكل:\n"
-                   f"<code>service_id[,quantity_multiplier]</code>\n"
-                   f"أمثلة:\n"
-                   f"<code>13912</code>  ← يعدّل الكود فقط\n"
-                   f"<code>13912,2000</code>  ← يعدّل الكود والكمية الافتراضية\n")
+            gname, services = pairs[idx]
+            context.user_data["__target_services__"] = services
+            context.user_data["waiting_for_bulk_service_code"] = True
+            txt = (f"📝 تعديل كود الـAPI للمجموعة: {gname}\n"
+                   f"عدد الخدمات: {len(services)}\n\n"
+                   f"أرسل الآن <b>رقم كود الـAPI</b> فقط (مثال: <code>13912</code>)، "
+                   f"وسيتم تعيينه لكل الخدمات في هذه المجموعة.")
             query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_service_codes")]]), parse_mode="HTML")
             return
         # طلبات الخدمات المعلّقة (سوشيال/تلي)
@@ -1759,7 +1766,7 @@ def handle_messages(update: Update, context: CallbackContext):
     if ban_msg:
         update.message.reply_text(ban_msg); return
 
-    # أولوية معالجة محرر أكواد الخدمات للمالك
+    # أولوية معالجة محرر أكواد الخدمات (تجميع)
     try:
         if _admin_text_gate(update, context):
             return
