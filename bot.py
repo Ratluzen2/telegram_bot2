@@ -708,7 +708,8 @@ _TYPE_KEYWORDS = {
     "لايكات": ["لايك","لايكات","like","likes","اعجابات","اعجاب"],
     "تعليقات": ["تعليق","تعليقات","comments","كومنت"],
     "ساعات مشاهدة": ["ساعات","watch time","ساعات مشاهده"],
-    "مشتركين": ["مشترك","مشتركين","subscribers","subs"],
+    "مشتركين": ["مشترك","مشتركين","subscribers","subs"],    "رفع سكور": ["رفع سكور","سكور","score","score boost","boost score","رفع تقييم"],
+
 }
 
 def _detect_platform_and_type(service_name: str):
@@ -719,6 +720,8 @@ def _detect_platform_and_type(service_name: str):
     for t, keys in _TYPE_KEYWORDS.items():
         if any(k in n for k in keys): typ = t; break
     return plat, typ
+
+EXCLUDE_GROUPS = {"رفع سكور instagram"}
 
 def build_service_groups():
     groups = {}
@@ -732,6 +735,8 @@ def build_service_groups():
             key = f"{typ}"
         else:
             key = f"{typ} {plat}"
+        if key in EXCLUDE_GROUPS:
+            continue
         groups.setdefault(key, []).append(name)
     ordered = sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0]))
     return ordered
