@@ -223,7 +223,7 @@ pg_pool = ConnectionPool(
 def _exec(sql: str, params: tuple = (), fetch: str = ""):
     """Execute a SQL statement safely with a one-time automatic retry.
     This fixes the issue where the first /start after a long idle period fails
-    because the Neon/PG pool closed the idle connection. We refresh the pool and retry once.
+    because the Postgres pool closed the idle connection. We refresh the pool and retry once.
     """
     global pg_pool
     for attempt in (1, 2):
@@ -248,7 +248,6 @@ def _exec(sql: str, params: tuple = (), fetch: str = ""):
                     logger.warning("DB op failed (will refresh pool & retry once): %s", e)
                 except Exception:
                     pass
-                # Try to refresh the pool and retry once
                 try:
                     try:
                         pg_pool.close()
@@ -264,15 +263,12 @@ def _exec(sql: str, params: tuple = (), fetch: str = ""):
                         kwargs={"sslmode": "require", "connect_timeout": 10},
                     )
                 except Exception:
-                    # ignore reinit errors; we'll re-raise on next failure
                     pass
-                # brief pause before retry
                 try:
                     import time as _t; _t.sleep(0.2)
                 except Exception:
                     pass
                 continue
-            # second failure -> bubble up
             raise
 
 
@@ -696,6 +692,7 @@ def admin_menu_keyboard():
         [InlineKeyboardButton("أكواد خدمات API", callback_data="admin_service_codes")],
         [InlineKeyboardButton("نظام الإحالة", callback_data="admin_referrals")]
     ]
+    buttons.append([InlineKeyboardButton("المتصدرين🎉", callback_data="show_leaderboard")])
     return InlineKeyboardMarkup(buttons)
 
 def services_menu_keyboard():
