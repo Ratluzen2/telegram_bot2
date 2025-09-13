@@ -623,43 +623,6 @@ def get_effective_price(user_id: int, service_name: str, base_price: float, kind
 # =========================
 def main_menu_keyboard(user_id: int):
     if user_id == ADMIN_ID:
-        if data == "admin_service_codes":
-            pairs = build_service_groups()
-            if not pairs:
-                query.edit_message_text("لا توجد خدمات معرّفة حالياً."); return
-            kb = []; names = []; display = ["🛠️ اختر مجموعة لتعديل كود الـAPI لها (أرسل رقمًا واحدًا فقط):\n"]
-            for idx, (gname, services) in enumerate(pairs):
-                names.append((gname, services))
-                display.append(f"{idx+1}) {gname} — {len(services)} خدمة")
-                kb.append([InlineKeyboardButton(f"تعديل: {gname}", callback_data=f"edit_group_{idx}")])
-            kb.append([InlineKeyboardButton("رجوع", callback_data="admin_menu")])
-            context.user_data["__groups__"] = names
-            query.edit_message_text("\n".join(display), reply_markup=InlineKeyboardMarkup(kb)); return
-
-        if data.startswith("edit_group_"):
-            try:
-                idx = int(data.split("_")[-1])
-            except Exception:
-                query.answer("خطأ في الفهرس.", show_alert=True); return
-            groups = context.user_data.get("__groups__") or build_service_groups()
-            if idx < 0 or idx >= len(groups):
-                query.answer("العنصر غير موجود.", show_alert=True); return
-            gname, services = groups[idx]
-            context.user_data["__target_services__"] = services
-            context.user_data["waiting_for_bulk_service_code"] = True
-            txt = (f"📝 تعديل كود الـAPI للمجموعة: {gname}\n"
-                   f"عدد الخدمات: {len(services)}\n\n"
-                   f"أرسل الآن <b>رقم كود الـAPI</b> فقط (مثال: <code>13912</code>)، وسيتم تعيينه لكل الخدمات في هذه المجموعة.")
-            query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_service_codes")]]), parse_mode="HTML"); return
-
-        if data == "admin_referrals":
-            ov = db_get_admin_ref_overview()
-            lines = ["📊 لوحة الإحالات (إدارة)\n",
-                     f"إجمالي الإحالات: {ov.get('total_refs',0)}",
-                     f"إجمالي العمولات المدفوعة: {ov.get('total_paid',0):.2f}$", "", "أفضل 10 مُحيلين:"]
-            for (inviter_id_i, cnt_i, paid_cnt_i) in ov.get("top", []):
-                lines.append(f"- ID:{inviter_id_i} — دعا {cnt_i} مستخدم (مدفوعة: {paid_cnt_i})")
-            query.edit_message_text("\n".join(lines), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_menu")]])); return
         return InlineKeyboardMarkup([
         [InlineKeyboardButton("لوحة تحكم المالك", callback_data="admin_menu")]
         ])
@@ -841,7 +804,6 @@ _TYPE_KEYWORDS = {
     "مشتركين": ["مشترك","مشتركين","subscribers","subs"],
     "رفع سكور": ["رفع سكور","سكور","score","boost score"],
 }
-
 EXCLUDE_GROUPS = {"رفع سكور instagram"}
 
 def _detect_platform_and_type(service_name: str):
@@ -910,7 +872,6 @@ def _get_bot_username(context: CallbackContext) -> str:
 # =========================
 def start(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
-
     # إلتقاط إحالة عبر رابط البدء (deep-link)
     try:
         text0 = update.message.text or ""
@@ -922,7 +883,6 @@ def start(update: Update, context: CallbackContext):
                     db_set_referral_if_new(inviter_id, user_id)
     except Exception as e:
         logger.error("referral capture failed: %s", e)
-
     clear_all_waiting_flags(context)
 
     ban_msg = _is_user_blocked_now(user_id)
@@ -1332,8 +1292,7 @@ def button_handler(update: Update, context: CallbackContext):
         buttons = [[InlineKeyboardButton("رجوع", callback_data="back_main")]]
         query.edit_message_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(buttons))
         return
-
-    # زر طلباتي (صفحة قابلة للتنقل)
+# زر طلباتي (صفحة قابلة للتنقل)
     if data == "my_orders" or data.startswith("my_orders_"):
         offset = 0
         if data == "my_orders":
@@ -1391,6 +1350,50 @@ def button_handler(update: Update, context: CallbackContext):
         return
 
     if user_id == ADMIN_ID:
+
+        # ======= محرر أكواد الخدمات (API) — تعديل جماعي بالكود فقط =======
+        if data == "admin_service_codes":
+            pairs = build_service_groups()
+            if not pairs:
+                query.edit_message_text("لا توجد خدمات معرّفة حالياً.")
+                return
+            kb = []; names = []; display = ["🛠️ اختر مجموعة لتعديل كود الـAPI لها (أرسل رقمًا واحدًا فقط):\n"]
+            for idx, (gname, services) in enumerate(pairs):
+                names.append((gname, services))
+                display.append(f"{idx+1}) {gname} — {len(services)} خدمة")
+                kb.append([InlineKeyboardButton(f"تعديل: {gname}", callback_data=f"edit_group_{idx}")])
+            kb.append([InlineKeyboardButton("رجوع", callback_data="admin_menu")])
+            context.user_data["__groups__"] = names
+            query.edit_message_text("\n".join(display), reply_markup=InlineKeyboardMarkup(kb))
+            return
+
+        if data.startswith("edit_group_"):
+            try:
+                idx = int(data.split("_")[-1])
+            except Exception:
+                query.answer("خطأ في الفهرس.", show_alert=True); return
+            groups = context.user_data.get("__groups__") or build_service_groups()
+            if idx < 0 or idx >= len(groups):
+                query.answer("العنصر غير موجود.", show_alert=True); return
+            gname, services = groups[idx]
+            context.user_data["__target_services__"] = services
+            context.user_data["waiting_for_bulk_service_code"] = True
+            txt = (f"📝 تعديل كود الـAPI للمجموعة: {gname}\n"
+                   f"عدد الخدمات: {len(services)}\n\n"
+                   f"أرسل الآن <b>رقم كود الـAPI</b> فقط (مثال: <code>13912</code>)، وسيتم تعيينه لكل الخدمات في هذه المجموعة.")
+            query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_service_codes")]]), parse_mode="HTML")
+            return
+
+        # ======= لوحة إحالات المالك =======
+        if data == "admin_referrals":
+            ov = db_get_admin_ref_overview()
+            lines = ["📊 لوحة الإحالات (إدارة)\n",
+                     f"إجمالي الإحالات: {ov.get('total_refs',0)}",
+                     f"إجمالي العمولات المدفوعة: {ov.get('total_paid',0):.2f}$", "", "أفضل 10 مُحيلين:"]
+            for (inviter_id_i, cnt_i, paid_cnt_i) in ov.get("top", []):
+                lines.append(f"- ID:{inviter_id_i} — دعا {cnt_i} مستخدم (مدفوعة: {paid_cnt_i})")
+            query.edit_message_text("\n".join(lines), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_menu")]]))
+            return
         # طلبات الخدمات المعلّقة (سوشيال/تلي)
         if data == "pending_smm_orders":
             pend = db_get_pending_orders(category_filter=["smm"])
@@ -1941,15 +1944,16 @@ def handle_messages(update: Update, context: CallbackContext):
         target_id = context.user_data.get("admin_target_id")
         _exec("UPDATE users SET balance = COALESCE(balance,0) + %s WHERE user_id=%s", (amount, target_id))
         sync_balance_from_db(target_id)
+        # إحالة: أول شحن للمحال
         try:
             inviter_id = db_mark_first_funding_and_pay(target_id)
             if inviter_id:
                 try: context.bot.send_message(chat_id=inviter_id, text=f"🎉 مبروك! حصلت على عمولة إحالة {REFERRAL_COMMISSION_USD}$ لأن صديقك قام بأول شحن.")
                 except Exception as e: logger.error("notify inviter failed: %s", e)
-                try: context.bot.send_message(chat_id=ADMIN_ID, text=f"🎁 تم دفع عمولة إحالة {REFERRAL_COMMISSION_USD}$ للمُحيل بعد أول شحن (من المالك) للمستخدم {target_id}.")
+                try: context.bot.send_message(chat_id=ADMIN_ID, text=f"🎁 تم دفع عمولة إحالة {REFERRAL_COMMISSION_USD}$ للمُحيل بعد أول شحن (إضافة رصيد) للمستخدم {target_id}.")
                 except Exception as e: logger.error("notify admin failed: %s", e)
         except Exception as e:
-            logger.error("referral payout hook error: %s", e)
+            logger.error("ref payout on admin add balance failed: %s", e)
         update.message.reply_text(f"تم إضافة {amount}$ لآيدي {target_id}.")
         clear_all_waiting_flags(context); return
 
@@ -2095,6 +2099,7 @@ def handle_messages(update: Update, context: CallbackContext):
         sync_balance_from_db(target_id)
         db_approve_card(cid, amount)
         try:
+            # إحالة: أول شحن للمحال عبر آسياسيل
             try:
                 inviter_id = db_mark_first_funding_and_pay(target_id)
                 if inviter_id:
@@ -2103,7 +2108,7 @@ def handle_messages(update: Update, context: CallbackContext):
                     try: context.bot.send_message(chat_id=ADMIN_ID, text=f"🎁 تم دفع عمولة إحالة {REFERRAL_COMMISSION_USD}$ للمُحيل بعد أول شحن (آسياسيل) للمستخدم {target_id}.")
                     except Exception as e: logger.error("notify admin failed: %s", e)
             except Exception as e:
-                logger.error("referral payout hook error: %s", e)
+                logger.error("ref payout on asiacell approve failed: %s", e)
             context.bot.send_message(chat_id=target_id, text=f"🎉 تم شحن رصيدك بقيمة {amount}$.")
         except Exception as e: logger.error("Failed to notify user about topup: %s", e)
         update.message.reply_text(f"تم شحن رصيد المستخدم {card[2]} (@{card[3]}) بمبلغ {amount}$.")
