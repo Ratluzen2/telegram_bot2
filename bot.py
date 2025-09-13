@@ -48,7 +48,7 @@ logger = logging.getLogger("TG_BOT")
 # الإعدادات (Environment)
 # =========================
 ADMIN_ID = int(os.getenv("ADMIN_ID", "7655504656"))
-TOKEN = os.getenv("TOKEN", "8138615524:AAFr6m5Z4_gY0k7pdg7teD9nM8ReDC-KQKU")
+TOKEN = os.getenv("TOKEN", "8138:dummy_token_change_me")
 API_KEY = os.getenv("API_KEY", "25a9ceb07be0d8b2ba88e70dcbe92e06")
 API_URL = os.getenv("API_URL", "https://kd1s.com/api/v2")
 SUPPORT_CONTACT = os.getenv("SUPPORT_CONTACT", "@z396r")  # لدعم طرق الشحن الإضافية
@@ -303,6 +303,97 @@ _exec("""CREATE TABLE IF NOT EXISTS orders (
 _exec("CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id, ordered_at DESC)")
 _exec("CREATE INDEX IF NOT EXISTS idx_orders_status_cat ON orders(status, category)")
 
+
+# =========================
+# نظام الإحالة
+# =========================
+REFERRAL_COMMISSION_USD = 0.10
+
+_exec("""CREATE TABLE IF NOT EXISTS referrals (
+    invitee_id BIGINT PRIMARY KEY,
+    inviter_id BIGINT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    first_funding_at TIMESTAMPTZ,
+    commission_paid BOOLEAN DEFAULT FALSE,
+    commission_amount NUMERIC(10,2) DEFAULT 0.10
+)""")
+_exec("CREATE INDEX IF NOT EXISTS idx_referrals_inviter ON referrals(inviter_id)")
+
+def db_set_referral_if_new(inviter_id: int, invitee_id: int):
+    if not inviter_id or not invitee_id or inviter_id == invitee_id:
+        return
+    row = _exec("SELECT inviter_id FROM referrals WHERE invitee_id=%s", (invitee_id,), "one")
+    if row: return
+    _exec("INSERT INTO referrals (invitee_id, inviter_id, commission_amount) VALUES (%s,%s,%s)",
+          (invitee_id, inviter_id, REFERRAL_COMMISSION_USD))
+
+def db_get_referral_by_invitee(invitee_id: int):
+    return _exec("SELECT inviter_id, commission_paid, commission_amount, first_funding_at FROM referrals WHERE invitee_id=%s",
+                 (invitee_id,), "one")
+
+def db_mark_first_funding_and_pay(invitee_id: int) -> int:
+    row = db_get_referral_by_invitee(invitee_id)
+    if not row: return 0
+    inviter_id, commission_paid, commission_amount, _ = row
+    if commission_paid: return 0
+    _exec("UPDATE users SET balance = COALESCE(balance,0) + %s WHERE user_id=%s",
+          (commission_amount, inviter_id))
+    _exec("UPDATE referrals SET first_funding_at=NOW(), commission_paid=TRUE WHERE invitee_id=%s AND commission_paid=FALSE",
+          (invitee_id,))
+    try: sync_balance_from_db(inviter_id)
+    except Exception as e: logger.error("sync inviter balance failed: %s", e)
+    return inviter_id
+
+def db_get_user_ref_stats(inviter_id: int):
+    row = _exec("SELECT COUNT(*), SUM(CASE WHEN commission_paid THEN 1 ELSE 0 END), SUM(CASE WHEN NOT commission_paid THEN 1 ELSE 0 END), COALESCE(SUM(CASE WHEN commission_paid THEN commission_amount ELSE 0 END),0)                 FROM referrals WHERE inviter_id=%s", (inviter_id,), "one")
+    total, paid, pending, total_earned = row or (0,0,0,0)
+    invites = _exec("""SELECT r.invitee_id, u.full_name, u.username, r.commission_paid, r.created_at, r.first_funding_at
+                       FROM referrals r LEFT JOIN users u ON r.invitee_id=u.user_id
+                       WHERE r.inviter_id=%s ORDER BY r.created_at DESC LIMIT 10""", (inviter_id,), "all") or []
+    return {"total": total or 0, "paid": paid or 0, "pending": pending or 0, "total_earned": float(total_earned or 0), "invites": invites}
+
+def db_get_admin_ref_overview():
+    row = _exec("SELECT COUNT(*), COALESCE(SUM(CASE WHEN commission_paid THEN commission_amount ELSE 0 END),0) FROM referrals", (), "one")
+    total_refs, total_paid = row or (0,0)
+    top = _exec("""SELECT inviter_id, COUNT(*) AS cnt, SUM(CASE WHEN commission_paid THEN 1 ELSE 0 END) AS paid_cnt
+                    FROM referrals GROUP BY inviter_id ORDER BY cnt DESC LIMIT 10""", (), "all") or []
+    return {"total_refs": total_refs or 0, "total_paid": float(total_paid or 0), "top": top}
+
+
+
+
+
+# === أكواد الخدمات (Overrides) ===
+_exec("""CREATE TABLE IF NOT EXISTS service_api_overrides (
+    service_name TEXT PRIMARY KEY,
+    service_id   TEXT,
+    quantity_multiplier INTEGER
+)""")
+
+def db_get_service_override(service_name: str):
+    row = _exec("SELECT service_id, quantity_multiplier FROM service_api_overrides WHERE service_name=%s",
+                (service_name,), "one")
+    if not row:
+        return None
+    return {"service_id": row[0], "quantity_multiplier": row[1]}
+
+def db_set_service_override(service_name: str, service_id: str, quantity_multiplier: int = None):
+    qm = quantity_multiplier
+    if qm is None:
+        base = service_api_mapping.get(service_name) or {}
+        qm = int(base.get("quantity_multiplier", 1000))
+    _exec("""INSERT INTO service_api_overrides (service_name, service_id, quantity_multiplier)
+             VALUES (%s,%s,%s)
+             ON CONFLICT(service_name) DO UPDATE
+             SET service_id=EXCLUDED.service_id, quantity_multiplier=EXCLUDED.quantity_multiplier""",
+          (service_name, str(service_id), int(qm)))
+
+def db_delete_service_override(service_name: str):
+    _exec("DELETE FROM service_api_overrides WHERE service_name=%s", (service_name,))
+
+
+
+
 # =========================
 # دوال DB: المستخدمين والرصيد
 # =========================
@@ -532,6 +623,43 @@ def get_effective_price(user_id: int, service_name: str, base_price: float, kind
 # =========================
 def main_menu_keyboard(user_id: int):
     if user_id == ADMIN_ID:
+        if data == "admin_service_codes":
+            pairs = build_service_groups()
+            if not pairs:
+                query.edit_message_text("لا توجد خدمات معرّفة حالياً."); return
+            kb = []; names = []; display = ["🛠️ اختر مجموعة لتعديل كود الـAPI لها (أرسل رقمًا واحدًا فقط):\n"]
+            for idx, (gname, services) in enumerate(pairs):
+                names.append((gname, services))
+                display.append(f"{idx+1}) {gname} — {len(services)} خدمة")
+                kb.append([InlineKeyboardButton(f"تعديل: {gname}", callback_data=f"edit_group_{idx}")])
+            kb.append([InlineKeyboardButton("رجوع", callback_data="admin_menu")])
+            context.user_data["__groups__"] = names
+            query.edit_message_text("\n".join(display), reply_markup=InlineKeyboardMarkup(kb)); return
+
+        if data.startswith("edit_group_"):
+            try:
+                idx = int(data.split("_")[-1])
+            except Exception:
+                query.answer("خطأ في الفهرس.", show_alert=True); return
+            groups = context.user_data.get("__groups__") or build_service_groups()
+            if idx < 0 or idx >= len(groups):
+                query.answer("العنصر غير موجود.", show_alert=True); return
+            gname, services = groups[idx]
+            context.user_data["__target_services__"] = services
+            context.user_data["waiting_for_bulk_service_code"] = True
+            txt = (f"📝 تعديل كود الـAPI للمجموعة: {gname}\n"
+                   f"عدد الخدمات: {len(services)}\n\n"
+                   f"أرسل الآن <b>رقم كود الـAPI</b> فقط (مثال: <code>13912</code>)، وسيتم تعيينه لكل الخدمات في هذه المجموعة.")
+            query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_service_codes")]]), parse_mode="HTML"); return
+
+        if data == "admin_referrals":
+            ov = db_get_admin_ref_overview()
+            lines = ["📊 لوحة الإحالات (إدارة)\n",
+                     f"إجمالي الإحالات: {ov.get('total_refs',0)}",
+                     f"إجمالي العمولات المدفوعة: {ov.get('total_paid',0):.2f}$", "", "أفضل 10 مُحيلين:"]
+            for (inviter_id_i, cnt_i, paid_cnt_i) in ov.get("top", []):
+                lines.append(f"- ID:{inviter_id_i} — دعا {cnt_i} مستخدم (مدفوعة: {paid_cnt_i})")
+            query.edit_message_text("\n".join(lines), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_menu")]])); return
         return InlineKeyboardMarkup([
         [InlineKeyboardButton("لوحة تحكم المالك", callback_data="admin_menu")]
         ])
@@ -541,7 +669,8 @@ def main_menu_keyboard(user_id: int):
             [InlineKeyboardButton("رصيدي", callback_data="show_balance")],
             [InlineKeyboardButton("طلباتي", callback_data="my_orders")],
             [InlineKeyboardButton("لوحة تحكم المشرف", callback_data="moderator_menu")],
-            [InlineKeyboardButton("المتصدرين🎉", callback_data="show_leaderboard")]
+            [InlineKeyboardButton("المتصدرين🎉", callback_data="show_leaderboard")],
+        [InlineKeyboardButton("الإحالة", callback_data="referral_panel")]
         ])
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("الخدمات", callback_data="show_services")],
@@ -553,6 +682,7 @@ def main_menu_keyboard(user_id: int):
 def admin_menu_keyboard():
     buttons = [
         [InlineKeyboardButton("أكواد خدمات API", callback_data="admin_service_codes")],
+        [InlineKeyboardButton("نظام الإحالة", callback_data="admin_referrals")],
         [InlineKeyboardButton("الطلبات المعلّقة (الخدمات)", callback_data="pending_smm_orders")],
         [InlineKeyboardButton("إدارة المشرفين", callback_data="manage_mods")],
         [InlineKeyboardButton("حضر المستخدم", callback_data="block_user"),
@@ -683,7 +813,7 @@ def broadcast_ad(update: Update, context: CallbackContext):
         update.message.reply_text("تعذّر إرسال البث حالياً.")
 
 
-# ======= أدوات التجميع للخدمات =======
+# ======= أدوات التجميع + بوابة إدخال المالك + يوزرنيم البوت =======
 def _normalize_ar_text(s: str) -> str:
     s = (s or "").lower()
     rep = {"أ":"ا","إ":"ا","آ":"ا","ى":"ي","ة":"ه","ؤ":"و","ئ":"ي"}
@@ -708,9 +838,11 @@ _TYPE_KEYWORDS = {
     "لايكات": ["لايك","لايكات","like","likes","اعجابات","اعجاب"],
     "تعليقات": ["تعليق","تعليقات","comments","كومنت"],
     "ساعات مشاهدة": ["ساعات","watch time","ساعات مشاهده"],
-    "مشتركين": ["مشترك","مشتركين","subscribers","subs"],    "رفع سكور": ["رفع سكور","سكور","score","score boost","boost score","رفع تقييم"],
-
+    "مشتركين": ["مشترك","مشتركين","subscribers","subs"],
+    "رفع سكور": ["رفع سكور","سكور","score","boost score"],
 }
+
+EXCLUDE_GROUPS = {"رفع سكور instagram"}
 
 def _detect_platform_and_type(service_name: str):
     n = _normalize_ar_text(service_name)
@@ -720,8 +852,6 @@ def _detect_platform_and_type(service_name: str):
     for t, keys in _TYPE_KEYWORDS.items():
         if any(k in n for k in keys): typ = t; break
     return plat, typ
-
-EXCLUDE_GROUPS = {"رفع سكور instagram"}
 
 def build_service_groups():
     groups = {}
@@ -735,13 +865,11 @@ def build_service_groups():
             key = f"{typ}"
         else:
             key = f"{typ} {plat}"
-        if key in EXCLUDE_GROUPS:
-            continue
+        if key in EXCLUDE_GROUPS: continue
         groups.setdefault(key, []).append(name)
     ordered = sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0]))
     return ordered
 
-# ======= بوابة نصوص المالك (كود واحد لكل مجموعة) =======
 def _parse_service_code_only(s: str):
     s = (s or "").strip()
     import re as _re
@@ -751,45 +879,63 @@ def _parse_service_code_only(s: str):
 
 def _admin_text_gate(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
-    if user_id != ADMIN_ID:
-        return False
-
+    if user_id != ADMIN_ID: return False
     if context.user_data.get("waiting_for_bulk_service_code"):
         target_services = context.user_data.get("__target_services__") or []
-        payload = update.message.text or ""
-        sid = _parse_service_code_only(payload)
+        sid = _parse_service_code_only(update.message.text or "")
         if not sid:
-            update.message.reply_text("رجاءً أرسل رقم كود الـAPI فقط (مثل 13912).")
-            return True
-        try:
-            count = 0
-            for srv in target_services:
-                try:
-                    db_set_service_override(srv, sid, None)
-                    count += 1
-                except Exception as e:
-                    logger.error("bulk set override failed for %s: %s", srv, e)
-            context.user_data.pop("waiting_for_bulk_service_code", None)
-            context.user_data.pop("__target_services__", None)
-            update.message.reply_text(f"تم تعيين الكود {sid} لعدد {count} خدمة داخل المجموعة ✅",
-                                      reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_service_codes")]]))
-        except Exception as e:
-            update.message.reply_text(f"تعذر الحفظ: {e}")
+            update.message.reply_text("رجاءً أرسل رقم كود الـAPI فقط (مثال: 13912)."); return True
+        count = 0
+        for srv in target_services:
+            try: db_set_service_override(srv, sid, None); count += 1
+            except Exception as e: logger.error("bulk set override failed for %s: %s", srv, e)
+        context.user_data.pop("waiting_for_bulk_service_code", None)
+        context.user_data.pop("__target_services__", None)
+        update.message.reply_text(f"تم تعيين الكود {sid} لعدد {count} خدمة داخل المجموعة ✅",
+                                  reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_service_codes")]]))
         return True
-
     return False
+
+def _get_bot_username(context: CallbackContext) -> str:
+    try:
+        if getattr(context.bot, "username", None): return context.bot.username
+        me = context.bot.get_me()
+        if me and me.username:
+            context.bot.username = me.username; return me.username
+    except Exception as e: logger.error("get_me failed: %s", e)
+    return "YourBot"
 
 # =========================
 # دالة البداية (start)
 # =========================
 def start(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
+
+    # إلتقاط إحالة عبر رابط البدء (deep-link)
+    try:
+        text0 = update.message.text or ""
+        if text0.startswith("/start "):
+            payload = text0.split(" ", 1)[1].strip()
+            if payload.startswith("ref_"):
+                inviter_id = int(payload.replace("ref_", "").strip())
+                if inviter_id and inviter_id != user_id:
+                    db_set_referral_if_new(inviter_id, user_id)
+    except Exception as e:
+        logger.error("referral capture failed: %s", e)
+
     clear_all_waiting_flags(context)
 
     ban_msg = _is_user_blocked_now(user_id)
     if ban_msg:
         update.message.reply_text(ban_msg)
         return
+
+    # أولوية: التقاط إدخال المالك لمحرر الأكواد التجميعي
+    try:
+        if _admin_text_gate(update, context):
+            return
+    except Exception as _e:
+        logger.error("admin_text_gate error: %s", _e)
 
     full_name = update.effective_user.full_name
     username = update.effective_user.username or "NoUsername"
@@ -832,7 +978,14 @@ def approve_order_process_db(order_id: int, context: CallbackContext, query):
     _, uid, fn, un, cat, service_name, price, link = row
 
     if service_name in service_api_mapping:
-        mapping = service_api_mapping[service_name]
+        mapping = service_api_mapping[service_name].copy()
+        try:
+            ov = db_get_service_override(service_name)
+            if ov:
+                if ov.get("service_id"): mapping["service_id"] = ov["service_id"]
+                if ov.get("quantity_multiplier"): mapping["quantity_multiplier"] = int(ov["quantity_multiplier"])
+        except Exception as _e:
+            logger.error("override read error for %s: %s", service_name, _e)
         params = {
             'key': API_KEY,
             'action': 'add',
@@ -1157,6 +1310,29 @@ def button_handler(update: Update, context: CallbackContext):
         query.edit_message_text(f"رصيدك الحالي: {balance}$", reply_markup=InlineKeyboardMarkup(buttons))
         return
 
+    
+    # لوحة الإحالة للمستخدم
+    if data == "referral_panel":
+        uname = _get_bot_username(context)
+        link = f"https://t.me/{uname}?start=ref_{user_id}"
+        stats = db_get_user_ref_stats(user_id)
+        lines = [
+            "👥 نظام الإحالة\n",
+            f"🔗 رابطك: {link}",
+            f"📣 عدد المدعوين: {stats.get('total',0)}",
+            f"💸 أرباح مدفوعة: {stats.get('paid',0)} شخص = {stats.get('total_earned',0):.2f}$",
+            f"⏳ بانتظار الدفع: {stats.get('pending',0)}",
+            "", "آخر المدعوين:"
+        ]
+        for it in stats.get("invites", []):
+            iid, fn, un, paid, created_at, first_at = it
+            tag = "✅" if paid else "⏳"
+            uname2 = f"@{un}" if un and un != "NoUsername" else ""
+            lines.append(f"- {fn} {uname2} — {tag}")
+        buttons = [[InlineKeyboardButton("رجوع", callback_data="back_main")]]
+        query.edit_message_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(buttons))
+        return
+
     # زر طلباتي (صفحة قابلة للتنقل)
     if data == "my_orders" or data.startswith("my_orders_"):
         offset = 0
@@ -1215,43 +1391,6 @@ def button_handler(update: Update, context: CallbackContext):
         return
 
     if user_id == ADMIN_ID:
-
-        # ======= محرر أكواد الخدمات (API) — تعديل جماعي بالكود فقط =======
-        if data == "admin_service_codes":
-            pairs = build_service_groups()
-            if not pairs:
-                query.edit_message_text("لا توجد خدمات معرّفة حالياً.")
-                return
-            kb = []
-            display = ["🛠️ اختر مجموعة لتعديل كود الـAPI لها (أرسل رقمًا واحدًا فقط):\n"]
-            names = []
-            for idx, (gname, services) in enumerate(pairs):
-                names.append((gname, services))
-                display.append(f"{idx+1}) {gname} — {len(services)} خدمة")
-                kb.append([InlineKeyboardButton(f"تعديل: {gname}", callback_data=f"edit_group_{idx}")])
-            kb.append([InlineKeyboardButton("رجوع", callback_data="admin_menu")])
-            context.user_data["__groups__"] = names
-            query.edit_message_text("\n".join(display), reply_markup=InlineKeyboardMarkup(kb))
-            return
-
-        if data.startswith("edit_group_"):
-            try:
-                idx = int(data.split("_")[-1])
-            except Exception:
-                query.answer("خطأ في الفهرس.", show_alert=True); return
-            groups = context.user_data.get("__groups__")
-            pairs = groups if groups else build_service_groups()
-            if idx < 0 or idx >= len(pairs):
-                query.answer("العنصر غير موجود.", show_alert=True); return
-            gname, services = pairs[idx]
-            context.user_data["__target_services__"] = services
-            context.user_data["waiting_for_bulk_service_code"] = True
-            txt = (f"📝 تعديل كود الـAPI للمجموعة: {gname}\n"
-                   f"عدد الخدمات: {len(services)}\n\n"
-                   f"أرسل الآن <b>رقم كود الـAPI</b> فقط (مثال: <code>13912</code>)، "
-                   f"وسيتم تعيينه لكل الخدمات في هذه المجموعة.")
-            query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_service_codes")]]), parse_mode="HTML")
-            return
         # طلبات الخدمات المعلّقة (سوشيال/تلي)
         if data == "pending_smm_orders":
             pend = db_get_pending_orders(category_filter=["smm"])
@@ -1771,14 +1910,6 @@ def handle_messages(update: Update, context: CallbackContext):
     if ban_msg:
         update.message.reply_text(ban_msg); return
 
-    # أولوية معالجة محرر أكواد الخدمات (تجميع)
-    try:
-        if _admin_text_gate(update, context):
-            return
-    except Exception as _e:
-        logger.error("admin_text_gate error: %s", _e)
-
-
     full_name = update.effective_user.full_name
     username = update.effective_user.username or "NoUsername"
     text = update.message.text or ""
@@ -1810,6 +1941,15 @@ def handle_messages(update: Update, context: CallbackContext):
         target_id = context.user_data.get("admin_target_id")
         _exec("UPDATE users SET balance = COALESCE(balance,0) + %s WHERE user_id=%s", (amount, target_id))
         sync_balance_from_db(target_id)
+        try:
+            inviter_id = db_mark_first_funding_and_pay(target_id)
+            if inviter_id:
+                try: context.bot.send_message(chat_id=inviter_id, text=f"🎉 مبروك! حصلت على عمولة إحالة {REFERRAL_COMMISSION_USD}$ لأن صديقك قام بأول شحن.")
+                except Exception as e: logger.error("notify inviter failed: %s", e)
+                try: context.bot.send_message(chat_id=ADMIN_ID, text=f"🎁 تم دفع عمولة إحالة {REFERRAL_COMMISSION_USD}$ للمُحيل بعد أول شحن (من المالك) للمستخدم {target_id}.")
+                except Exception as e: logger.error("notify admin failed: %s", e)
+        except Exception as e:
+            logger.error("referral payout hook error: %s", e)
         update.message.reply_text(f"تم إضافة {amount}$ لآيدي {target_id}.")
         clear_all_waiting_flags(context); return
 
@@ -1954,7 +2094,17 @@ def handle_messages(update: Update, context: CallbackContext):
         _exec("UPDATE users SET balance = COALESCE(balance,0) + %s WHERE user_id=%s", (amount, target_id))
         sync_balance_from_db(target_id)
         db_approve_card(cid, amount)
-        try: context.bot.send_message(chat_id=target_id, text=f"🎉 تم شحن رصيدك بقيمة {amount}$.")
+        try:
+            try:
+                inviter_id = db_mark_first_funding_and_pay(target_id)
+                if inviter_id:
+                    try: context.bot.send_message(chat_id=inviter_id, text=f"🎉 مبروك! حصلت على عمولة إحالة {REFERRAL_COMMISSION_USD}$ لأن صديقك شحن لأول مرة عبر آسياسيل.")
+                    except Exception as e: logger.error("notify inviter failed: %s", e)
+                    try: context.bot.send_message(chat_id=ADMIN_ID, text=f"🎁 تم دفع عمولة إحالة {REFERRAL_COMMISSION_USD}$ للمُحيل بعد أول شحن (آسياسيل) للمستخدم {target_id}.")
+                    except Exception as e: logger.error("notify admin failed: %s", e)
+            except Exception as e:
+                logger.error("referral payout hook error: %s", e)
+            context.bot.send_message(chat_id=target_id, text=f"🎉 تم شحن رصيدك بقيمة {amount}$.")
         except Exception as e: logger.error("Failed to notify user about topup: %s", e)
         update.message.reply_text(f"تم شحن رصيد المستخدم {card[2]} (@{card[3]}) بمبلغ {amount}$.")
         clear_all_waiting_flags(context); return
