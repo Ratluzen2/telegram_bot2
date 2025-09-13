@@ -431,8 +431,16 @@ def db_get_user_ref_stats(inviter_id: int):
 def db_get_admin_ref_overview():
     row = _exec("SELECT COUNT(*), COALESCE(SUM(CASE WHEN commission_paid THEN commission_amount ELSE 0 END),0) FROM referrals", (), "one")
     total_refs, total_paid = row or (0,0)
-    top = _exec("""SELECT inviter_id, COUNT(*) AS cnt, SUM(CASE WHEN commission_paid THEN 1 ELSE 0 END) AS paid_cnt
-                    FROM referrals GROUP BY inviter_id ORDER BY cnt DESC LIMIT 10""", (), "all") or []
+    top = _exec("""SELECT r.inviter_id,
+                           COALESCE(u.full_name, 'Unknown') AS full_name,
+                           COALESCE(u.username, '') AS username,
+                           COUNT(*) AS cnt,
+                           SUM(CASE WHEN r.commission_paid THEN 1 ELSE 0 END) AS paid_cnt
+                    FROM referrals r
+                    LEFT JOIN users u ON u.user_id = r.inviter_id
+                    GROUP BY r.inviter_id, u.full_name, u.username
+                    ORDER BY cnt DESC
+                    LIMIT 10""", (), "all") or []
     return {"total_refs": total_refs or 0, "total_paid": float(total_paid or 0), "top": top}
 
 
@@ -1441,9 +1449,11 @@ def button_handler(update: Update, context: CallbackContext):
             lines = ["📊 لوحة الإحالات (إدارة)\n",
                      f"إجمالي الإحالات: {ov.get('total_refs',0)}",
                      f"إجمالي العمولات المدفوعة: {ov.get('total_paid',0):.2f}$", "", "أفضل 10 مُحيلين:"]
-            for (inviter_id_i, cnt_i, paid_cnt_i) in ov.get("top", []):
-                lines.append(f"- ID:{inviter_id_i} — دعا {cnt_i} مستخدم (مدفوعة: {paid_cnt_i})")
-            query.edit_message_text("\n".join(lines), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_menu")]]))
+            for row in ov.get("top", []):
+                inviter_id_i, full_name_i, username_i, cnt_i, paid_cnt_i = row
+                uname = f"@{username_i}" if username_i else "—"
+                lines.append(f'- <a href="tg://user?id:{inviter_id_i}">{full_name_i}</a> | {uname} | ID:{inviter_id_i} — دعا {cnt_i} مستخدم (مدفوعة: {paid_cnt_i})')
+            query.edit_message_text("\n".join(lines), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_menu")]]), parse_mode="HTML")
             return
         # طلبات الخدمات المعلّقة (سوشيال/تلي)
         if data == "pending_smm_orders":
