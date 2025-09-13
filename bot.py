@@ -97,6 +97,15 @@ service_api_mapping = {
     "رفع سكور بثك2k": {"service_id": 13125, "quantity_multiplier": 2000},
     "رفع سكور بثك3k": {"service_id": 13125, "quantity_multiplier": 3000},
     "رفع سكور بثك10k": {"service_id": 13125, "quantity_multiplier": 10000},
+
+    "أعضاء قنوات تلي 1k": {"service_id": 14021, "quantity_multiplier": 1000},
+    "أعضاء قنوات تلي 2k": {"service_id": 14021, "quantity_multiplier": 2000},
+    "أعضاء قنوات تلي 3k": {"service_id": 14021, "quantity_multiplier": 3000},
+    "أعضاء قنوات تلي 4k": {"service_id": 14021, "quantity_multiplier": 4000},
+    "أعضاء كروبات تلي 1k": {"service_id": 14022, "quantity_multiplier": 1000},
+    "أعضاء كروبات تلي 2k": {"service_id": 14022, "quantity_multiplier": 2000},
+    "أعضاء كروبات تلي 3k": {"service_id": 14022, "quantity_multiplier": 3000},
+    "أعضاء كروبات تلي 4k": {"service_id": 14022, "quantity_multiplier": 4000},
 }
 
 # الأسعار الأساسية
@@ -826,6 +835,8 @@ _PLAT_KEYWORDS = {
 
 _TYPE_KEYWORDS = {
     "مشاهدات بث": ["مشاهدات بث","مشاهدات البث","مشاهدة البث","بث مباشر","لايف","live","live views"],
+    "أعضاء قنوات": ["اعضاء قنوات","اعضاء قناة","قناة","قنوات","channel members","channel"],
+    "أعضاء كروبات": ["اعضاء كروبات","اعضاء كروب","كروب","كروبات","group members","group"],
     "مشاهدات": ["مشاهده","مشاهدات","view","views"],
     "متابعين": ["متابع","متابعين","followers","فولو"],
     "لايكات": ["لايك","لايكات","like","likes","اعجابات","اعجاب"],
@@ -834,6 +845,7 @@ _TYPE_KEYWORDS = {
     "مشتركين": ["مشترك","مشتركين","subscribers","subs"],
     "رفع سكور": ["رفع سكور","سكور","score","boost score"],
 }
+
 
 EXCLUDE_GROUPS = {"رفع سكور instagram"}
 
@@ -901,6 +913,14 @@ def _get_bot_username(context: CallbackContext) -> str:
 
 # =========================
 def start(update: Update, context: CallbackContext):
+    # حذف رسالة /start السابقة إن وجدت
+    try:
+        prev_id = context.user_data.get('last_start_menu_message_id')
+        if prev_id:
+            context.bot.delete_message(chat_id=update.effective_chat.id, message_id=prev_id)
+            context.user_data['last_start_menu_message_id'] = None
+    except Exception as _e:
+        logger.debug('Could not delete previous start menu: %s', _e)
     user_id = update.effective_user.id
     clear_all_waiting_flags(context)
 
