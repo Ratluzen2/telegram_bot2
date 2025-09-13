@@ -47,8 +47,8 @@ logger = logging.getLogger("TG_BOT")
 # =========================
 # الإعدادات (Environment)
 # =========================
-ADMIN_ID = int(os.getenv("ADMIN_ID", "7655504656"))
-TOKEN = os.getenv("TOKEN", "8138615524:AAFr6m5Z4_gY0k7pdg7teD9nM8ReDC-KQKU")
+ADMIN_ID = int(os.getenv("8138615524:AAFr6m5Z4_gY0k7pdg7teD9nM8ReDC-KQKU"))
+TOKEN = os.getenv("TOKEN", "8138:dummy_token_change_me")
 API_KEY = os.getenv("API_KEY", "25a9ceb07be0d8b2ba88e70dcbe92e06")
 API_URL = os.getenv("API_URL", "https://kd1s.com/api/v2")
 SUPPORT_CONTACT = os.getenv("SUPPORT_CONTACT", "@z396r")  # لدعم طرق الشحن الإضافية
@@ -955,7 +955,8 @@ def start(update: Update, context: CallbackContext):
     update_username_in_db(user_id, username)
     sync_balance_from_db(user_id)
 
-    update.message.reply_text("مرحباً بك في البوت!", reply_markup=main_menu_keyboard(user_id))
+    msg = update.message.reply_text("مرحباً بك في البوت!", reply_markup=main_menu_keyboard(user_id))
+    context.user_data["last_start_menu_message_id"] = msg.message_id
 
 # =========================
 # فحص رصيد API
