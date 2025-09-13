@@ -93,10 +93,10 @@ service_api_mapping = {
     "مشاهدات بث انستغرام 2k": {"service_id": 12595, "quantity_multiplier": 2000},
     "مشاهدات بث انستغرام 3k": {"service_id": 12595, "quantity_multiplier": 3000},
     "مشاهدات بث انستغرام 4k": {"service_id": 12595, "quantity_multiplier": 4000},
-    "رفع سكور بثك1k": {"service_id": 13125, "quantity_multiplier": 1000},
-    "رفع سكور بثك2k": {"service_id": 13125, "quantity_multiplier": 2000},
-    "رفع سكور بثك3k": {"service_id": 13125, "quantity_multiplier": 3000},
-    "رفع سكور بثك10k": {"service_id": 13125, "quantity_multiplier": 10000},
+    "رفع سكور بثك1k": {"service_id": 14662, "quantity_multiplier": 1000},
+    "رفع سكور بثك2k": {"service_id": 14662, "quantity_multiplier": 2000},
+    "رفع سكور بثك3k": {"service_id": 14662, "quantity_multiplier": 3000},
+    "رفع سكور بثك10k": {"service_id": 14662, "quantity_multiplier": 10000},
 }
 
 # الأسعار الأساسية
