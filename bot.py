@@ -60,10 +60,10 @@ if not TOKEN or ":" not in TOKEN:
 # تعريف القواميس الخاصة بالخدمات
 # =========================
 service_api_mapping = {
-    "متابعين تيكتوك 1k": {"service_id": 13912, "quantity_multiplier": 1000},
-    "متابعين تيكتوك 2k": {"service_id": 13912, "quantity_multiplier": 2000},
-    "متابعين تيكتوك 3k": {"service_id": 13912, "quantity_multiplier": 3000},
-    "متابعين تيكتوك 4k": {"service_id": 13912, "quantity_multiplier": 4000},
+    "متابعين تيكتوك 1k": {"service_id": 15012, "quantity_multiplier": 1000},
+    "متابعين تيكتوك 2k": {"service_id": 15012, "quantity_multiplier": 2000},
+    "متابعين تيكتوك 3k": {"service_id": 15012, "quantity_multiplier": 3000},
+    "متابعين تيكتوك 4k": {"service_id": 15012, "quantity_multiplier": 4000},
     "مشاهدات تيكتوك 1k": {"service_id": 9447, "quantity_multiplier": 1000},
     "مشاهدات تيكتوك 10k": {"service_id": 9543, "quantity_multiplier": 10000},
     "مشاهدات تيكتوك 20k": {"service_id": 9543, "quantity_multiplier": 20000},
