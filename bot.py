@@ -14,6 +14,8 @@
 """
 
 import logging
+import time
+BOOT_TIME = time.time()
 import requests
 import time
 import os
@@ -303,8 +305,7 @@ _exec("""CREATE TABLE IF NOT EXISTS orders (
 _exec("CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id, ordered_at DESC)")
 _exec("CREATE INDEX IF NOT EXISTS idx_orders_status_cat ON orders(status, category)")
 
-# === أكواد الخدمات (Overrides) + نظام الإحالة ===
-# جدول overrides لتعيين service_id/quantity_multiplier مخصص لكل خدمة
+# === جدول أكواد خدمات API المخصصة (Overrides) ===
 _exec("""CREATE TABLE IF NOT EXISTS service_api_overrides (
     service_name TEXT PRIMARY KEY,
     service_id   TEXT,
@@ -332,7 +333,8 @@ def db_set_service_override(service_name: str, service_id: str, quantity_multipl
 def db_delete_service_override(service_name: str):
     _exec("DELETE FROM service_api_overrides WHERE service_name=%s", (service_name,))
 
-# نظام الإحالة
+
+# === نظام الإحالة ===
 REFERRAL_COMMISSION_USD = 0.10
 
 _exec("""CREATE TABLE IF NOT EXISTS referrals (
@@ -766,14 +768,12 @@ def broadcast_ad(update: Update, context: CallbackContext):
         update.message.reply_text("تعذّر إرسال البث حالياً.")
 
 # =========================
-# دالة البداية (start)
 
-# ======= أدوات التجميع + بوابة المالك + يوزرنيم البوت =======
+# ======= أدوات التجميع + بوابة المالك + اسم المستخدم للبوت =======
 def _normalize_ar_text(s: str) -> str:
     s = (s or "").lower()
     rep = {"أ":"ا","إ":"ا","آ":"ا","ى":"ي","ة":"ه","ؤ":"و","ئ":"ي"}
-    for k,v in rep.items():
-        s = s.replace(k, v)
+    for k,v in rep.items(): s = s.replace(k, v)
     return s
 
 _PLAT_KEYWORDS = {
@@ -786,7 +786,6 @@ _PLAT_KEYWORDS = {
     "snapchat": ["snap","سناب","سناب شات"],
     "twitch": ["twitch","تويتش"],
 }
-
 _TYPE_KEYWORDS = {
     "مشاهدات": ["مشاهده","مشاهدات","view","views","مشاهدات بث"],
     "متابعين": ["متابع","متابعين","followers","فولو"],
@@ -800,7 +799,7 @@ EXCLUDE_GROUPS = {"رفع سكور instagram"}
 
 def _detect_platform_and_type(service_name: str):
     n = _normalize_ar_text(service_name)
-    plat = "أخرى"; typ = "أخرى"
+    plat, typ = "أخرى", "أخرى"
     for p, keys in _PLAT_KEYWORDS.items():
         if any(k in n for k in keys): plat = p; break
     for t, keys in _TYPE_KEYWORDS.items():
@@ -811,25 +810,19 @@ def build_service_groups():
     groups = {}
     for name in service_api_mapping.keys():
         plat, typ = _detect_platform_and_type(name)
-        if plat == "أخرى" and typ == "أخرى":
-            key = "أخرى"
-        elif typ == "أخرى":
-            key = f"أخرى {plat}"
-        elif plat == "أخرى":
-            key = f"{typ}"
-        else:
-            key = f"{typ} {plat}"
+        if plat == "أخرى" and typ == "أخرى": key = "أخرى"
+        elif typ == "أخرى": key = f"أخرى {plat}"
+        elif plat == "أخرى": key = f"{typ}"
+        else: key = f"{typ} {plat}"
         if key in EXCLUDE_GROUPS: continue
         groups.setdefault(key, []).append(name)
     ordered = sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0]))
     return ordered
 
 def _parse_service_code_only(s: str):
-    s = (s or "").strip()
     import re as _re
-    m = _re.search(r"\d+", s)
-    if not m: return None
-    return m.group(0)
+    m = _re.search(r"\d+", (s or "").strip())
+    return m.group(0) if m else None
 
 def _admin_text_gate(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
@@ -859,15 +852,20 @@ def _get_bot_username(context: CallbackContext) -> str:
     except Exception as e: logger.error("get_me failed: %s", e)
     return "YourBot"
 
-
+# دالة البداية (start)
 # =========================
 def start(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     clear_all_waiting_flags(context)
-
+    # quick welcome on cold boot
+    try:
+        if time.time() - BOOT_TIME < 6:
+            update.message.reply_text("مرحباً بك في البوت!", reply_markup=main_menu_keyboard(update.effective_user.id))
+    except Exception:
+        pass
     # إحالة عبر رابط البدء
     try:
-        _t = update.message.text or ""
+        _t = (update.message.text or "").strip()
         if _t.startswith("/start "):
             _payload = _t.split(" ", 1)[1].strip()
             if _payload.startswith("ref_"):
@@ -876,14 +874,12 @@ def start(update: Update, context: CallbackContext):
                     existed = db_get_referral_by_invitee(user_id)
                     if not existed:
                         db_set_referral_if_new(_inv, user_id)
-                        try:
-                            context.bot.send_message(chat_id=_inv, text="👥 تمت إضافة إحالة جديدة عبر رابطك. سيتم دفع العمولة بعد أول شحن لصديقك.")
+                        try: context.bot.send_message(chat_id=_inv, text="✅ تم تسجيل إحالة جديدة عبر رابطك.")
                         except Exception: pass
-                        try:
-                            context.bot.send_message(chat_id=user_id, text=f"تم ربط حسابك بالمُحيل (ID:{_inv}).")
+                        try: context.bot.send_message(chat_id=ADMIN_ID, text=f"📌 إحالة جديدة: {_inv} ← {user_id}")
                         except Exception: pass
-    except Exception as e:
-        logger.error("referral capture failed: %s", e)
+    except Exception as _e:
+        logger.error("referral capture failed: %s", _e)
 
     ban_msg = _is_user_blocked_now(user_id)
     if ban_msg:
@@ -987,6 +983,15 @@ def button_handler(update: Update, context: CallbackContext):
     query = update.callback_query
     user_id = query.from_user.id
     data = query.data
+    # callback start fallback
+    if data in ("start", "/start"):
+        try:
+            return start(update, context)
+        except Exception as _e:
+            logger.error("callback /start failed: %s", _e)
+            query.answer("أعد المحاولة من /start", show_alert=False)
+            return
+
     query.answer()
 
     clear_all_waiting_flags(context)
@@ -1013,7 +1018,7 @@ def button_handler(update: Update, context: CallbackContext):
             "", "آخر المدعوين:"
         ]
         for it in stats.get("invites", []):
-            iid, fn, un, paid, created_at, first_at = it
+            iid, fn, un, paid, created_at, first_funding_at = it
             tag = "✅" if paid else "⏳"
             uname2 = f"@{un}" if un and un != "NoUsername" else ""
             lines.append(f"- {fn} {uname2} — {tag}")
@@ -1342,7 +1347,7 @@ def button_handler(update: Update, context: CallbackContext):
         return
 
     if user_id == ADMIN_ID:
-        # ======= محرر أكواد الخدمات (API) =======
+        # إدارة أكواد خدمات API (تعديل جماعي)
         if data == "admin_service_codes":
             pairs = build_service_groups()
             if not pairs:
@@ -1375,7 +1380,7 @@ def button_handler(update: Update, context: CallbackContext):
             query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_service_codes")]]), parse_mode="HTML")
             return
 
-        # ======= لوحة إحالات المالك =======
+        # لوحة إحالات المالك
         if data == "admin_referrals":
             ov = db_get_admin_ref_overview()
             lines = ["📊 لوحة الإحالات (إدارة)\n",
@@ -1904,12 +1909,18 @@ def handle_messages(update: Update, context: CallbackContext):
     if ban_msg:
         update.message.reply_text(ban_msg); return
 
-    # إدخال المالك لكود مجموعة الخدمات
+    # force route /start inside text messages (fallback)
     try:
-        if _admin_text_gate(update, context):
-            return
+        _txt0 = (update.message.text or "").strip()
+        if _txt0.startswith("/start"):
+            try:
+                return start(update, context)
+            except Exception as _e:
+                logger.error("fallback /start in handle_messages failed: %s", _e)
+                return
     except Exception as _e:
-        logger.error("admin_text_gate error: %s", _e)
+        logger.error("/start route in handle_messages failed: %s", _e)
+
 
     full_name = update.effective_user.full_name
     username = update.effective_user.username or "NoUsername"
@@ -2246,7 +2257,7 @@ def main():
     dp.add_handler(CallbackQueryHandler(button_handler))
     dp.add_handler(MessageHandler((Filters.text | Filters.photo | Filters.video | Filters.voice) & ~Filters.command, handle_messages))
 
-    updater.start_polling()
+    updater.start_polling(drop_pending_updates=False)
     updater.idle()
 
 if __name__ == "__main__":
