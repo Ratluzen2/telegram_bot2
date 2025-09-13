@@ -48,7 +48,7 @@ logger = logging.getLogger("TG_BOT")
 # الإعدادات (Environment)
 # =========================
 ADMIN_ID = int(os.getenv("ADMIN_ID", "7655504656"))
-TOKEN = os.getenv("TOKEN", "8138:dummy_token_change_me")
+TOKEN = os.getenv("TOKEN", "8138615524:AAFr6m5Z4_gY0k7pdg7teD9nM8ReDC-KQKU")
 API_KEY = os.getenv("API_KEY", "25a9ceb07be0d8b2ba88e70dcbe92e06")
 API_URL = os.getenv("API_URL", "https://kd1s.com/api/v2")
 SUPPORT_CONTACT = os.getenv("SUPPORT_CONTACT", "@z396r")  # لدعم طرق الشحن الإضافية
@@ -303,6 +303,37 @@ _exec("""CREATE TABLE IF NOT EXISTS orders (
 _exec("CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id, ordered_at DESC)")
 _exec("CREATE INDEX IF NOT EXISTS idx_orders_status_cat ON orders(status, category)")
 
+# === أكواد الخدمات (Overrides) ===
+_exec("""CREATE TABLE IF NOT EXISTS service_api_overrides (
+    service_name TEXT PRIMARY KEY,
+    service_id   TEXT,
+    quantity_multiplier INTEGER
+)""")
+
+def db_get_service_override(service_name: str):
+    row = _exec("SELECT service_id, quantity_multiplier FROM service_api_overrides WHERE service_name=%s",
+                (service_name,), "one")
+    if not row: 
+        return None
+    return {"service_id": row[0], "quantity_multiplier": row[1]}
+
+def db_set_service_override(service_name: str, service_id: str, quantity_multiplier: int = None):
+    # إذا لم يُعطى quantity_multiplier نبقيه كما هو إن وجد، وإلا نستخدم الموجود في القاموس الأصلي إن توفر
+    qm = quantity_multiplier
+    if qm is None:
+        base = service_api_mapping.get(service_name) or {}
+        qm = int(base.get("quantity_multiplier", 1000))
+    _exec("""INSERT INTO service_api_overrides (service_name, service_id, quantity_multiplier)
+             VALUES (%s,%s,%s)
+             ON CONFLICT(service_name) DO UPDATE
+             SET service_id=EXCLUDED.service_id, quantity_multiplier=EXCLUDED.quantity_multiplier""",
+          (service_name, str(service_id), int(qm)))
+
+def db_delete_service_override(service_name: str):
+    _exec("DELETE FROM service_api_overrides WHERE service_name=%s", (service_name,))
+
+
+
 # =========================
 # دوال DB: المستخدمين والرصيد
 # =========================
@@ -532,6 +563,50 @@ def get_effective_price(user_id: int, service_name: str, base_price: float, kind
 # =========================
 def main_menu_keyboard(user_id: int):
     if user_id == ADMIN_ID:
+
+
+    # ======= محرر أكواد الخدمات (API) =======
+    if data == "admin_service_codes" and user_id == ADMIN_ID:
+        # عرض قائمة الخدمات مع الكود الحالي (أولوية للـ override إن وجد)
+        lines = ["🛠️ محرر أكواد الخدمات (API)\n",
+                 "اختر خدمة لتعديل كودها (service_id) أو الكمية الافتراضية:"]
+        kb = []
+        idx = 0
+        for name, mapping in service_api_mapping.items():
+            ov = db_get_service_override(name)
+            sid = (ov or {}).get("service_id") or mapping.get("service_id", "-")
+            qty = (ov or {}).get("quantity_multiplier") or mapping.get("quantity_multiplier", "-")
+            lines.append(f"- {name} • service_id: {sid} • qty: {qty}")
+            kb.append([
+                InlineKeyboardButton(f"تعديل: {name}", callback_data=f"edit_srvcode_{idx}")
+            ])
+            idx += 1
+        kb.append([InlineKeyboardButton("رجوع", callback_data="admin_menu")])
+        context.user_data["__svc_list__"] = list(service_api_mapping.keys())
+        query.edit_message_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(kb))
+        return
+
+    if data.startswith("edit_srvcode_") and user_id == ADMIN_ID:
+        try:
+            idx = int(data.split("_")[-1])
+        except Exception:
+            query.answer("خطأ في الفهرس.", show_alert=True); return
+        names = context.user_data.get("__svc_list__") or list(service_api_mapping.keys())
+        if idx < 0 or idx >= len(names):
+            query.answer("العنصر غير موجود.", show_alert=True); return
+        target = names[idx]
+        context.user_data["edit_service_name"] = target
+        context.user_data["waiting_for_edit_service_code"] = True
+        # التعليمات
+        txt = (f"📝 تعديل كود خدمة:\nالخدمة: {target}\n\n"
+               f"أرسل القيمة بهذا الشكل:\n"
+               f"<code>service_id[,quantity_multiplier]</code>\n"
+               f"أمثلة:\n"
+               f"<code>13912</code>  ← يعدّل الكود فقط\n"
+               f"<code>13912,2000</code>  ← يعدّل الكود والكمية الافتراضية\n")
+        query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_service_codes")]]), parse_mode="HTML")
+        return
+
         return InlineKeyboardMarkup([
         [InlineKeyboardButton("لوحة تحكم المالك", callback_data="admin_menu")]
         ])
@@ -569,7 +644,10 @@ def admin_menu_keyboard():
          InlineKeyboardButton("فحص حالة طلب API", callback_data="api_order_status")],
         [InlineKeyboardButton("المتصدرين🎉", callback_data="show_leaderboard")],
         [InlineKeyboardButton("رجوع", callback_data="back_main")]
-    ]
+    
+        [InlineKeyboardButton("أكواد خدمات API", callback_data="admin_service_codes")],
+
+]
     return InlineKeyboardMarkup(buttons)
 
 def services_menu_keyboard():
@@ -624,6 +702,8 @@ def clear_all_waiting_flags(context: CallbackContext):
         "waiting_for_new_mod", "waiting_for_remove_mod", "admin_target_id",
         "score_map",
         "my_orders_offset"
+    ,
+        "waiting_for_edit_service_code", "waiting_for_edit_service_qty", "edit_service_name"
     ]
     for key in waiting_keys:
         context.user_data.pop(key, None)
@@ -691,6 +771,50 @@ def start(update: Update, context: CallbackContext):
         update.message.reply_text(ban_msg)
         return
 
+
+def _parse_service_edit_payload(s: str):
+    s = (s or "").strip().replace(" ", "")
+    if not s:
+        return None, None
+    if "," in s:
+        a, b = s.split(",", 1)
+        try:
+            return str(a), int(b)
+        except Exception:
+            try:
+                return str(a), int(float(b))
+            except Exception:
+                return str(a), None
+    # فقط service_id
+    return str(s), None
+
+def _admin_text_gate(update: Update, context: CallbackContext):
+    # المعالجة الخاصة بنصوص لوحة المالك
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        return False
+
+    # تعديل كود خدمة
+    if context.user_data.get("waiting_for_edit_service_code"):
+        service_name = context.user_data.get("edit_service_name")
+        payload = update.message.text or ""
+        sid, qty = _parse_service_edit_payload(payload)
+        if not service_name or not sid:
+            update.message.reply_text("تنسيق غير صحيح. أعد المحاولة أو اضغط رجوع من القائمة.")
+            return True
+        try:
+            db_set_service_override(service_name, sid, qty)
+            context.user_data.pop("waiting_for_edit_service_code", None)
+            context.user_data.pop("edit_service_name", None)
+            update.message.reply_text(f"تم حفظ التعديلات ✅\nالخدمة: {service_name}\nservice_id={sid}\nquantity={qty if qty is not None else '(بدون تغيير)'}",
+                                      reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_service_codes")]]))
+        except Exception as e:
+            update.message.reply_text(f"تعذر الحفظ: {e}")
+        return True
+
+    return False
+
+
     full_name = update.effective_user.full_name
     username = update.effective_user.username or "NoUsername"
     add_user_to_db(user_id, full_name, username)
@@ -732,7 +856,17 @@ def approve_order_process_db(order_id: int, context: CallbackContext, query):
     _, uid, fn, un, cat, service_name, price, link = row
 
     if service_name in service_api_mapping:
-        mapping = service_api_mapping[service_name]
+        mapping = service_api_mapping[service_name].copy()
+        # تطبيق أي override من قاعدة البيانات
+        try:
+            ov = db_get_service_override(service_name)
+            if ov:
+                if ov.get("service_id"):
+                    mapping["service_id"] = ov["service_id"]
+                if ov.get("quantity_multiplier"):
+                    mapping["quantity_multiplier"] = int(ov["quantity_multiplier"])
+        except Exception as _e:
+            logger.error("override read error for %s: %s", service_name, _e)
         params = {
             'key': API_KEY,
             'action': 'add',
@@ -1629,6 +1763,12 @@ def button_handler(update: Update, context: CallbackContext):
 # استقبال الرسائل (Message)
 # =========================
 def handle_messages(update: Update, context: CallbackContext):
+    # أولوية معالجة نصوص المالك (محرر الأكواد)
+    try:
+        if _admin_text_gate(update, context):
+            return
+    except Exception as _e:
+        logger.error("admin_text_gate error: %s", _e)
     user_id = update.effective_user.id
     ban_msg = _is_user_blocked_now(user_id)
     if ban_msg:
