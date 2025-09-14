@@ -1077,6 +1077,10 @@ def approve_order_process_db(order_id: int, context: CallbackContext, query):
 # أزرار (Callback)
 # =========================
 def button_handler(update: Update, context: CallbackContext):
+    query = update.callback_query
+    user_id = query.from_user.id
+    data = query.data
+
     # شرح الخصومات للمشرفين
     if data == "mod_discount_info" and is_moderator(user_id):
         text_msg = (
@@ -1089,10 +1093,6 @@ def button_handler(update: Update, context: CallbackContext):
         query.edit_message_text(text_msg, parse_mode="HTML",
                                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="show_services")]]))
         return
-
-    query = update.callback_query
-    user_id = query.from_user.id
-    data = query.data
     query.answer()
 
     clear_all_waiting_flags(context)
