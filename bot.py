@@ -2333,7 +2333,7 @@ def handle_messages(update: Update, context: CallbackContext):
                 chat_id=ADMIN_ID,
                 text=(f"🆕 طلب لودو:\n- المستخدم: {full_name} (@{username}) | ID: {user_id}\n"
                       f"- الخدمة: {service_name} | السعر: {price}$\n- آيدي لودو: {ludo_id}"),
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("طلبات لودو", callback_data="pending_ludo_orders")]])
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("طلبات لودو المعلقة", callback_data="pending_ludo_orders")]])
             )
         except Exception:
             pass
