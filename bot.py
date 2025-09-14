@@ -570,10 +570,6 @@ def list_blocked_users():
 
 def unblock_user(user_id: int):
     _exec("DELETE FROM blocked_users WHERE user_id=%s", (user_id,))
-    try:
-        context.bot.send_message(chat_id=user_id, text="✅ تم إلغاء حظرك. يمكنك استخدام البوت الآن.")
-    except Exception:
-        pass
 
 def _record_and_check_card(user_id: int, digits: str) -> Optional[str]:
     # سجل
@@ -856,26 +852,6 @@ def broadcast_ad(update: Update, context: CallbackContext):
                     context.bot.send_message(chat_id=usr[0], text=text_to_send)
                 except Exception as e:
                     logger.error("Error sending text to %s: %s", usr[0], e)
-            update.message.reply_text(admin_reply)
-        elif update.message.voice:
-            file_id = update.message.voice.file_id
-            caption = update.message.caption or ""
-            new_caption = announcement_prefix + caption
-            for usr in all_users:
-                try:
-                    context.bot.send_voice(chat_id=usr[0], voice=file_id, caption=new_caption)
-                except Exception as e:
-                    logger.error("Error sending voice to %s: %s", usr[0], e)
-            update.message.reply_text(admin_reply)
-        elif update.message.audio:
-            file_id = update.message.audio.file_id
-            caption = update.message.caption or ""
-            new_caption = announcement_prefix + caption
-            for usr in all_users:
-                try:
-                    context.bot.send_audio(chat_id=usr[0], audio=file_id, caption=new_caption)
-                except Exception as e:
-                    logger.error("Error sending audio to %s: %s", usr[0], e)
             update.message.reply_text(admin_reply)
         else:
             update.message.reply_text("نوع الرسالة غير مدعوم في البث.")
@@ -1376,7 +1352,7 @@ def button_handler(update: Update, context: CallbackContext):
     if data.startswith("pubg_service_"):
         name = data[len("pubg_service_"):]
         base_price = pubg_services.get(name, 0)
-        price = get_effective_price(user_id, service_name, base_price, "pubg")
+        price = get_effective_price(user_id, name, base_price, "pubg")
         current_balance = users_balance.get(user_id, 0.0)
         if current_balance < price:
             buttons = [
@@ -1646,6 +1622,10 @@ def button_handler(update: Update, context: CallbackContext):
                 query.edit_message_text("حدث خطأ في بيانات المستخدم.")
                 return
             unblock_user(target_id)
+            try:
+                context.bot.send_message(chat_id=target_id, text="✅ تم إلغاء حظرك. يمكنك استخدام البوت الآن.")
+            except Exception:
+                pass
             query.edit_message_text("تم إلغاء حظر المستخدم بنجاح.")
             return
 
@@ -2225,6 +2205,7 @@ def handle_messages(update: Update, context: CallbackContext):
             context.bot.send_message(chat_id=ADMIN_ID, text=f"✅ تمت إضافة {amount}$ لآيدي {target_id}. الرصيد الحالي: {cur if cur is not None else '-'}$")
         except Exception:
             pass
+
         # إحالة: أول شحن
         try:
             inviter_id = db_mark_first_funding_and_pay(target_id)
@@ -2279,16 +2260,13 @@ def handle_messages(update: Update, context: CallbackContext):
             context.bot.send_message(chat_id=ADMIN_ID, text=f"⚠️ تم خصم {amount}$ من آيدي {target_id}. الرصيد الحالي: {cur if cur is not None else '-'}$")
         except Exception:
             pass
+
         clear_all_waiting_flags(context); return
 
     if user_id == ADMIN_ID and context.user_data.get("waiting_for_block"):
         ident = text.strip()
         if ident.isdigit():
             _ban_user_for_hours(int(ident), CARD_BAN_HOURS, "حظر يدوي من المالك.")
-            try:
-                context.bot.send_message(chat_id=int(ident), text="🚫 تم حظرك مؤقتًا من استخدام البوت بأمر من المالك.")
-            except Exception:
-                pass
             update.message.reply_text("تم حضر المستخدم.")
         else:
             uname = _normalize_username(ident)
@@ -2298,10 +2276,6 @@ def handle_messages(update: Update, context: CallbackContext):
                     target = usr[0]; break
             if target:
                 _ban_user_for_hours(target, CARD_BAN_HOURS, "حظر يدوي من المالك.")
-                try:
-                    context.bot.send_message(chat_id=target, text="🚫 تم حظرك مؤقتًا من استخدام البوت بأمر من المالك.")
-                except Exception:
-                    pass
                 update.message.reply_text("تم حضر المستخدم.")
             else:
                 update.message.reply_text("لم يتم العثور على المستخدم.")
@@ -2454,7 +2428,16 @@ def handle_messages(update: Update, context: CallbackContext):
         users_balance[user_id] = round(bal - price, 2)
         sync_balance_to_db(user_id)
         add_user_spent(user_id, price)
-        db_add_order(user_id, full_name, username, "pubg", service_name, price, None, {"pubg_id": pubg_id})
+        order_id = db_add_order(user_id, full_name, username, "pubg", service_name, price, None, {"pubg_id": pubg_id})
+        try:
+            context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=(f"🆕 طلب شدّات ببجي:\n" f"- المستخدم: {full_name} (@{username}) | ID: {user_id}\n" f"- الخدمة: {service_name} | السعر: {price}$\n" f"- آيدي ببجي: {pubg_id}\n- رقم الطلب: #{order_id}"),
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("طلبات شدات ببجي", callback_data="pending_pubg_orders")]])
+            )
+        except Exception:
+            pass
+
         update.message.reply_text("✅ تم استلام طلب شحن شدات ببجي. سنقوم بالتنفيذ قريباً.", reply_markup=main_menu_keyboard(user_id))
         clear_all_waiting_flags(context); return
 
@@ -2469,7 +2452,16 @@ def handle_messages(update: Update, context: CallbackContext):
             users_balance[user_id] = round(bal - price, 2)
             sync_balance_to_db(user_id)
             add_user_spent(user_id, price)
-            db_add_order(user_id, full_name, username, "itunes", service_name, price, None, {})
+            order_id = db_add_order(user_id, full_name, username, "itunes", service_name, price, None, {})
+            try:
+                context.bot.send_message(
+                    chat_id=ADMIN_ID,
+                    text=(f"🆕 طلب شحن آيتونز:\n" f"- المستخدم: {full_name} (@{username}) | ID: {user_id}\n" f"- الخدمة: {service_name} | السعر: {price}$\n- رقم الطلب: #{order_id}"),
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("طلبات شحن الايتونز", callback_data="pending_itunes_orders")]])
+                )
+            except Exception:
+                pass
+
             update.message.reply_text("✅ تم استلام طلب ايتونز. سيتم إرسال الكود لك قريباً.", reply_markup=main_menu_keyboard(user_id))
         else:
             update.message.reply_text("تم إلغاء العملية.")
