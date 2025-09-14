@@ -1096,17 +1096,18 @@ def button_handler(update: Update, context: CallbackContext):
     data = query.data
 
     # شرح الخصومات للمشرفين
+    
     if data == "mod_discount_info" and is_moderator(user_id):
         text_msg = (
-            "<b>شرح نظام الخصومات للمشرفين</b>\n\n"
-            "• نسبة الخصم: <b>10%</b> على جميع الخدمات.\n"
-            "• الخصم يظهر مباشرة في <b>قوائم الأسعار</b>.\n"
-            "• عند إنشاء الطلب يتم خصم <b>السعر بعد الخصم</b> من الرصيد.\n"
-            "• السعر المسجل في الطلب هو <b>السعر بعد الخصم</b>.\n"
+            "💡 <b>خصومات المشرف:</b>\n"
+            "• المتابعين/اللايكات/مشاهدات البث/رفع سكور تيكتوك/خدمات التليجرام ⇒ ×0.8\n"
+            "• شراء رصيد ايتونز/شدات ببجي ⇒ ×0.9\n"
+            "تُطبق الخصومات تلقائياً عند عرض الأسعار والخصم من الرصيد."
         )
         query.edit_message_text(text_msg, parse_mode="HTML",
                                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="show_services")]]))
         return
+
     query.answer()
 
     clear_all_waiting_flags(context)
