@@ -1352,7 +1352,7 @@ def button_handler(update: Update, context: CallbackContext):
     if data.startswith("pubg_service_"):
         name = data[len("pubg_service_"):]
         base_price = pubg_services.get(name, 0)
-        price = get_effective_price(user_id, name, base_price, "pubg")
+        price = get_effective_price(user_id, service_name, base_price, "pubg")
         current_balance = users_balance.get(user_id, 0.0)
         if current_balance < price:
             buttons = [
@@ -2393,7 +2393,34 @@ def handle_messages(update: Update, context: CallbackContext):
         users_balance[user_id] = round(bal - price, 2)
         sync_balance_to_db(user_id)
         add_user_spent(user_id, price)
-        db_add_order(user_id, full_name, username, "pubg", service_name, price, None, {"pubg_id": pubg_id})
+        oid = db_add_order(user_id, full_name, username, "pubg", service_name, price, None, {"pubg_id": pubg_id})
+
+        try:
+
+            context.bot.send_message(
+
+                chat_id=ADMIN_ID,
+
+                text=(f"🆕 طلب شدّات ببجي:
+"
+
+                      f"- المستخدم: {full_name} (@{username}) | ID: {user_id}
+"
+
+                      f"- الخدمة: {service_name} | السعر: {price}$
+"
+
+                      f"- آيدي ببجي: {pubg_id}
+- رقم الطلب: #{oid}"),
+
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("طلبات شدات ببجي", callback_data="pending_pubg_orders")]])
+
+            )
+
+        except Exception:
+
+            pass
+
         update.message.reply_text("✅ تم استلام طلب شحن شدات ببجي. سنقوم بالتنفيذ قريباً.", reply_markup=main_menu_keyboard(user_id))
         clear_all_waiting_flags(context); return
 
@@ -2408,7 +2435,31 @@ def handle_messages(update: Update, context: CallbackContext):
             users_balance[user_id] = round(bal - price, 2)
             sync_balance_to_db(user_id)
             add_user_spent(user_id, price)
-            db_add_order(user_id, full_name, username, "itunes", service_name, price, None, {})
+            oid = db_add_order(user_id, full_name, username, "itunes", service_name, price, None, {})
+
+            try:
+
+                context.bot.send_message(
+
+                    chat_id=ADMIN_ID,
+
+                    text=(f"🆕 طلب شحن آيتونز:
+"
+
+                          f"- المستخدم: {full_name} (@{username}) | ID: {user_id}
+"
+
+                          f"- الخدمة: {service_name} | السعر: {price}$
+- رقم الطلب: #{oid}"),
+
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("طلبات شحن الايتونز", callback_data="pending_itunes_orders")]])
+
+                )
+
+            except Exception:
+
+                pass
+
             update.message.reply_text("✅ تم استلام طلب ايتونز. سيتم إرسال الكود لك قريباً.", reply_markup=main_menu_keyboard(user_id))
         else:
             update.message.reply_text("تم إلغاء العملية.")
