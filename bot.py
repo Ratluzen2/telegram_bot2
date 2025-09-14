@@ -14,7 +14,6 @@
 """
 
 import logging
-import secrets
 import requests
 import time
 import os
@@ -1099,22 +1098,14 @@ def get_mod_discount_help_text() -> str:
         "• يُطبَّق الخصم تلقائيًا عند <b>عرض الأسعار</b> و<b>خصم الرصيد</b> و<b>تسجيل الطلب</b>."
     )
 
-# ===== نسخ بنقرة واحدة =====
-def make_copy_button(context: CallbackContext, label: str, text: str) -> InlineKeyboardButton:
-    token = secrets.token_urlsafe(8)
-    cache = context.bot_data.setdefault("copy_cache", {})
-    cache[token] = text
-    return InlineKeyboardButton(label, callback_data=f"copy:{token}")
-
 def button_handler(update: Update, context: CallbackContext):
     query = update.callback_query
     user_id = query.from_user.id
     data = query.data
 
 
-
-    # شرح الخصومات للمشرفين (يدعم عدة أسماء لأزرار قديمة)
-    if data in ("mod_discount_info", "admin_discount_info", "discount_info", "help_discount") and is_moderator(user_id):
+    # شرح الخصومات للمشرفين
+    if data == "mod_discount_info" and is_moderator(user_id):
         try:
             query.edit_message_text(
                 get_mod_discount_help_text(),
@@ -1813,13 +1804,6 @@ def button_handler(update: Update, context: CallbackContext):
                 for (oid, uid, fn, un, service, price, pubg_id) in pend:
                     text_msg += f"#{oid}) @{un} - الخدمة: {service}, الآيدي: {pubg_id}\n"
                     buttons.append([InlineKeyboardButton(f"معالجة الطلب #{oid}", callback_data=f"process_pubg_order_{oid}")])
-                try:
-                    cb1 = make_copy_button(context, "📋 نسخ آيدي ببجي", str(pubg_id))
-                    cb2 = make_copy_button(context, "📋 نسخ ID الطلب", str(oid))
-                    cb3 = make_copy_button(context, "📋 نسخ ID المستخدم", str(uid))
-                    buttons.append([cb1, cb2, cb3])
-                except Exception:
-                    pass
                 buttons.append([InlineKeyboardButton("رجوع", callback_data="admin_menu")])
                 query.edit_message_text(text_msg, reply_markup=InlineKeyboardMarkup(buttons))
             return
@@ -1902,16 +1886,8 @@ def button_handler(update: Update, context: CallbackContext):
                 buttons = []
                 for (oid, uid, fn, un, service, price, ludo_id) in pend:
                     user_line = f"{fn} (@{un})" if un else f"{fn}"
-                    text_msg += f"#{oid}) {user_line} - الخدمة: {service}, الآيدي: <code>{ludo_id}</code>\n"
+                    text_msg += f"#{oid}) {user_line} - الخدمة: {service}, الآيدي: {ludo_id}\n"
                     buttons.append([InlineKeyboardButton(f"معالجة الطلب #{oid}", callback_data=f"process_ludo_order_{oid}")])
-                # أزرار نسخ
-                try:
-                    cb1 = make_copy_button(context, "📋 نسخ آيدي لودو", str(ludo_id))
-                    cb2 = make_copy_button(context, "📋 نسخ ID الطلب", str(oid))
-                    cb3 = make_copy_button(context, "📋 نسخ ID المستخدم", str(uid))
-                    buttons.append([cb1, cb2, cb3])
-                except Exception:
-                    pass
                 buttons.append([InlineKeyboardButton("رجوع", callback_data="admin_menu")])
                 query.edit_message_text(text_msg, reply_markup=InlineKeyboardMarkup(buttons))
             return
@@ -1984,13 +1960,7 @@ def button_handler(update: Update, context: CallbackContext):
                 buttons = []
                 for (oid, uid, fn, un, service, price) in pend:
                     text_msg += f"#{oid}) @{un} - {service} بسعر {price}$\n"
-                    buttons.append([InlineKeyboardButton(f"معالجة الطلب #{oid}", callback_data=f"process_itunes_order_{oid}")])
-                try:
-                    cb2 = make_copy_button(context, "📋 نسخ ID الطلب", str(oid))
-                    cb3 = make_copy_button(context, "📋 نسخ ID المستخدم", str(uid))
-                    buttons.append([cb2, cb3])
-                except Exception:
-                    pass
+                    buttons.append([InlineKeyboardButton(f"معالجة الطلب #{oid}", callback_data=f"process_itunes_{oid}")])
                 buttons.append([InlineKeyboardButton("رجوع", callback_data="admin_menu")])
                 query.edit_message_text(text_msg, reply_markup=InlineKeyboardMarkup(buttons))
             return
@@ -2153,8 +2123,8 @@ def button_handler(update: Update, context: CallbackContext):
             query.edit_message_text("هذه الميزة مخصصة للمشرفين فقط."); return
         txt = (
             "💡 خصومات المشرف:\n"
-            "• المتابعين/اللايكات/مشاهدات البث/رفع سكور تيكتوك/خدمات التليجرام ⇒ 10%\n"
-            "• شراء رصيد ايتونز/شدات ببجي ⇒ 10%\n"
+            "• المتابعين/اللايكات/مشاهدات البث/رفع سكور تيكتوك/خدمات التليجرام ⇒ ×0.8\n"
+            "• شراء رصيد ايتونز/شدات ببجي ⇒ ×0.9\n"
             "تُطبق الخصومات تلقائياً عند عرض الأسعار والخصم من الرصيد."
         )
         query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="moderator_menu")]]))
