@@ -1090,24 +1090,31 @@ def approve_order_process_db(order_id: int, context: CallbackContext, query):
 # =========================
 # أزرار (Callback)
 # =========================
+# ===== شرح خصومات المشرف (نص موحد) =====
+def get_mod_discount_help_text() -> str:
+    return (
+        "💡 <b>خصومات المشرف:</b>\n"
+        "• خصم ثابت <b>10٪</b> على جميع الخدمات داخل البوت.\n"
+        "• يُطبَّق الخصم تلقائيًا عند <b>عرض الأسعار</b> و<b>خصم الرصيد</b> و<b>تسجيل الطلب</b>."
+    )
+
 def button_handler(update: Update, context: CallbackContext):
     query = update.callback_query
     user_id = query.from_user.id
     data = query.data
 
-    # شرح الخصومات للمشرفين
-    
-    
-    if data == "mod_discount_info" and is_moderator(user_id):
-        text_msg = (
-            "💡 <b>خصومات المشرف:</b>\n"
-            "• خصم ثابت <b>10٪</b> على جميع الخدمات داخل البوت.\n"
-            "• يُطبَّق الخصم تلقائيًا عند <b>عرض الأسعار</b> و<b>خصم الرصيد</b> و<b>تسجيل الطلب</b>."
-        )
-        query.edit_message_text(text_msg, parse_mode="HTML",
-                                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="show_services")]]))
-        return
 
+    # شرح الخصومات للمشرفين
+    if data == "mod_discount_info" and is_moderator(user_id):
+        try:
+            query.edit_message_text(
+                get_mod_discount_help_text(),
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="show_services")]])
+            )
+        except Exception:
+            context.bot.send_message(chat_id=update.effective_chat.id, text=get_mod_discount_help_text(), parse_mode="HTML")
+        return
 
     query.answer()
 
