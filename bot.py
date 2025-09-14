@@ -737,6 +737,7 @@ def admin_menu_keyboard():
         [InlineKeyboardButton("أكواد خدمات API", callback_data="admin_service_codes")],
         [InlineKeyboardButton("نظام الإحالة", callback_data="admin_referrals")]
     ]
+    buttons.append([InlineKeyboardButton("شرح الخصومات", callback_data="admin_discounts_info")])
     buttons.append([InlineKeyboardButton("المتصدرين🎉", callback_data="show_leaderboard")])
     return InlineKeyboardMarkup(buttons)
 
@@ -1628,12 +1629,16 @@ def button_handler(update: Update, context: CallbackContext):
             query.edit_message_text("أرسل الآن آيدي المستخدم الذي تريد إضافة الرصيد له:")
             context.user_data["waiting_for_add_balance_user_id"] = True
             return
-
-        if data == "admin_discount":
-            query.edit_message_text("أرسل الآن آيدي المستخدم الذي تريد خصم الرصيد منه:")
-            context.user_data["waiting_for_discount_user_id"] = True
+        if data == "admin_discounts_info":
+            try:
+                query.edit_message_text(
+                    get_mod_discount_help_text(),
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_menu")]])
+                )
+            except Exception:
+                context.bot.send_message(chat_id=update.effective_chat.id, text=get_mod_discount_help_text(), parse_mode="HTML")
             return
-
         if data == "admin_announce":
             query.edit_message_text("أرسل الآن الرسالة أو الوسائط (صورة/فيديو/تسجيل صوتي/نص) لإعلان البوت لجميع المستخدمين:")
             context.user_data["waiting_for_broadcast"] = True
@@ -2121,13 +2126,14 @@ def button_handler(update: Update, context: CallbackContext):
     if data == "mod_discounts_info":
         if not is_moderator(user_id):
             query.edit_message_text("هذه الميزة مخصصة للمشرفين فقط."); return
-        txt = (
-            "💡 خصومات المشرف:\n"
-            "• المتابعين/اللايكات/مشاهدات البث/رفع سكور تيكتوك/خدمات التليجرام ⇒ ×0.8\n"
-            "• شراء رصيد ايتونز/شدات ببجي ⇒ ×0.9\n"
-            "تُطبق الخصومات تلقائياً عند عرض الأسعار والخصم من الرصيد."
-        )
-        query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="moderator_menu")]]))
+        try:
+            query.edit_message_text(
+                get_mod_discount_help_text(),
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="moderator_menu")]])
+            )
+        except Exception:
+            context.bot.send_message(chat_id=update.effective_chat.id, text=get_mod_discount_help_text(), parse_mode="HTML")
         return
 
 # =========================
