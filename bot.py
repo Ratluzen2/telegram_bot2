@@ -2478,3 +2478,17 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# =========================
+# خصومات المشرفين (جديد – خصم ثابت 10% للمشرفين فقط)
+# =========================
+def get_effective_price(user_id: int, service_name: str, base_price: float, kind: str = "generic") -> float:
+    try:
+        if is_moderator(user_id):
+            return round(float(base_price) * 0.90, 2)
+        return float(base_price)
+    except Exception as e:
+        logger.error("get_effective_price error: %s", e)
+        return float(base_price)
+
