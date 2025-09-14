@@ -1077,6 +1077,19 @@ def approve_order_process_db(order_id: int, context: CallbackContext, query):
 # أزرار (Callback)
 # =========================
 def button_handler(update: Update, context: CallbackContext):
+    # شرح الخصومات للمشرفين
+    if data == "mod_discount_info" and is_moderator(user_id):
+        text_msg = (
+            "<b>شرح نظام الخصومات للمشرفين</b>\n\n"
+            "• نسبة الخصم: <b>10%</b> على جميع الخدمات.\n"
+            "• الخصم يظهر مباشرة في <b>قوائم الأسعار</b>.\n"
+            "• عند إنشاء الطلب يتم خصم <b>السعر بعد الخصم</b> من الرصيد.\n"
+            "• السعر المسجل في الطلب هو <b>السعر بعد الخصم</b>.\n"
+        )
+        query.edit_message_text(text_msg, parse_mode="HTML",
+                                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="show_services")]]))
+        return
+
     query = update.callback_query
     user_id = query.from_user.id
     data = query.data
