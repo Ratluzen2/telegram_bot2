@@ -198,7 +198,6 @@ ludo_services = {
     "لودو 1463320 ذهب": 13,
     "لودو 3666470 ذهب": 28,
 }
-
 # =========================
 # المتغيرات والذاكرة (تظل موجودة لكن الاعتماد الآن على DB)
 # =========================
@@ -660,16 +659,6 @@ def db_get_user_orders(user_id:int, limit:int=10, offset:int=0):
 def db_count_user_orders(user_id:int) -> int:
     return _exec("SELECT COUNT(*) FROM orders WHERE user_id=%s", (user_id,), "one")[0]
 
-
-# ======== دوال خاصة بطلبات لودو ========
-def db_get_pending_ludo_orders():
-    return _exec("""SELECT id, user_id, full_name, username, service, price, payload, ordered_at
-                    FROM orders WHERE status='pending' AND category='ludo' ORDER BY ordered_at ASC""", fetch="all") or []
-
-def db_mark_order_waiting(order_id:int):
-    _exec("UPDATE orders SET status='waiting' WHERE id=%s", (order_id,))
-
-
 # =========================
 # خصومات المشرفين
 # =========================
@@ -724,7 +713,6 @@ def admin_menu_keyboard():
         [InlineKeyboardButton("الكارتات المعلقة", callback_data="pending_cards")],
         [InlineKeyboardButton("طلبات شدات ببجي", callback_data="pending_pubg_orders")],
         [InlineKeyboardButton("طلبات شحن الايتونز", callback_data="pending_itunes_orders")],
-        [InlineKeyboardButton("طلبات لودو", callback_data="pending_ludo_orders")],
         [InlineKeyboardButton("إضافة الرصيد", callback_data="admin_add_balance"), InlineKeyboardButton("خصم الرصيد", callback_data="admin_discount")],
         [InlineKeyboardButton("فحص رصيد API", callback_data="api_check_balance"), InlineKeyboardButton("فحص حالة طلب API", callback_data="api_order_status")],
         [InlineKeyboardButton("عدد المستخدمين", callback_data="admin_users_count"), InlineKeyboardButton("رصيد المستخدمين", callback_data="admin_users_balance")],
@@ -745,7 +733,6 @@ def services_menu_keyboard():
         [InlineKeyboardButton("قسم مشاهدات البث المباشر", callback_data="show_live_views")],
         [InlineKeyboardButton("قسم شحن شدات ببجي", callback_data="show_pubg")],
         [InlineKeyboardButton("رفع سكور تيكتوك", callback_data="show_tiktok_score")],
-        [InlineKeyboardButton("خدمات لودو", callback_data="show_ludo_services")],
         [InlineKeyboardButton("قسم شراء رصيد ايتونز", callback_data="show_itunes_services")],
         [InlineKeyboardButton("خدمات التليجرام", callback_data="show_telegram_services")],
         [InlineKeyboardButton("خدمات لودو", callback_data="show_ludo_services")],
@@ -780,7 +767,6 @@ def telegram_services_keyboard(user_id: int):
     return InlineKeyboardMarkup(buttons)
 
 
-
 def ludo_services_keyboard(user_id: int):
     buttons = []
     for service_name, price in ludo_services.items():
@@ -788,18 +774,19 @@ def ludo_services_keyboard(user_id: int):
         buttons.append([InlineKeyboardButton(f"{service_name} - {eff}$", callback_data=f"ludo_service_{service_name}")])
     buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
     return InlineKeyboardMarkup(buttons)
+
+
 def clear_all_waiting_flags(context: CallbackContext):
     waiting_keys = [
         "waiting_for_card", "waiting_for_block", "waiting_for_add_balance_user_id",
         "waiting_for_add_balance_amount", "waiting_for_discount_user_id", "waiting_for_discount_amount",
         "waiting_for_broadcast", "waiting_for_api_order_status", "selected_service", "service_price",
-        "selected_pubg_service", "pubg_service_price", "card_to_approve", "card_to_approve_id", "waiting_for_amount",
+        "selected_pubg_service", "pubg_service_price", "selected_ludo_service", "ludo_service_price", "card_to_approve", "card_to_approve_id", "waiting_for_amount",
         "selected_itunes_service", "itunes_service_price", "waiting_for_itunes_confirm",
         "waiting_for_itunes_code", "itunes_to_complete_id",
         "selected_telegram_service", "telegram_service_price", "waiting_for_telegram_link",
         "waiting_for_new_mod", "waiting_for_remove_mod", "admin_target_id",
         "score_map",
-        "selected_ludo_service", "ludo_service_price", "waiting_for_ludo_id",
         "my_orders_offset", "waiting_for_bulk_service_code", "__target_services__", "__groups__"
     ]
     for key in waiting_keys:
@@ -1101,38 +1088,6 @@ def button_handler(update: Update, context: CallbackContext):
         query.answer(ban_msg, show_alert=True)
         return
 
-    
-
-    # قسم خدمات لودو
-    if data == "show_ludo_services":
-        query.edit_message_text("اختر خدمة لودو المطلوبة:", reply_markup=ludo_services_keyboard(user_id))
-        return
-
-    if data.startswith("ludo_service_"):
-        service_name = data.replace("ludo_service_", "")
-        base_price = ludo_services.get(service_name)
-        if base_price is None:
-            query.edit_message_text("الخدمة غير موجودة.")
-            return
-        price = get_effective_price(user_id, service_name, base_price, "ludo")
-        current_balance = users_balance.get(user_id, 0.0)
-        if current_balance < price:
-            buttons = [
-            [InlineKeyboardButton("شحن عبر اسياسيل", callback_data="charge_asiacell")],
-            [InlineKeyboardButton("شحن عبر سوبركي", callback_data="charge_superkey")],
-            [InlineKeyboardButton("شحن عبر زين كاش", callback_data="charge_zaincash")],
-            [InlineKeyboardButton("شحن عبر USDT", callback_data="charge_usdt")],
-            [InlineKeyboardButton("شحن عبر نقاط سنتات", callback_data="charge_cent_points")],
-            [InlineKeyboardButton("شحن عبر هلابي", callback_data="charge_helabi")],
-            [InlineKeyboardButton("رجوع", callback_data="show_ludo_services")]
-        ]
-            query.edit_message_text("رصيدك ليس كافياً.", reply_markup=InlineKeyboardMarkup(buttons))
-            return
-        # تجهيز لاستقبال آيدي لودو
-        context.user_data["selected_ludo_service"] = service_name
-        context.user_data["ludo_service_price"] = price
-        query.edit_message_text("أرسل آيدي لودو الخاص بك (أرقام فقط).", parse_mode="HTML")
-        return
     if data == "back_main":
         query.edit_message_text("القائمة الرئيسية:", reply_markup=main_menu_keyboard(user_id))
         return
@@ -1226,8 +1181,6 @@ def button_handler(update: Update, context: CallbackContext):
         service_buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
         query.edit_message_text("اختر الخدمة المطلوبة:", reply_markup=InlineKeyboardMarkup(service_buttons))
         return
-
-    
 
     if data == "show_tiktok_score":
         query.edit_message_text("اختر خدمة رفع سكور تيكتوك المطلوبة:", reply_markup=tiktok_score_keyboard(user_id, context))
@@ -1329,7 +1282,35 @@ def button_handler(update: Update, context: CallbackContext):
         query.edit_message_text(message_text, parse_mode="HTML")
         return
 
-    # اختيار خدمة ببجي
+    
+    # قسم خدمات لودو
+    if data == "show_ludo_services":
+        query.edit_message_text("اختر خدمة لودو المطلوبة:", reply_markup=ludo_services_keyboard(user_id))
+        return
+
+    # اختيار خدمة لودو
+    if data.startswith("ludo_service_"):
+        service_name = data[len("ludo_service_"):]
+        base_price = ludo_services.get(service_name, 0)
+        price = get_effective_price(user_id, service_name, base_price, "ludo")
+        current_balance = users_balance.get(user_id, 0.0)
+        if current_balance < price:
+            buttons = [
+                [InlineKeyboardButton("شحن عبر اسياسيل", callback_data="charge_asiacell")],
+                [InlineKeyboardButton("شحن عبر سوبركي", callback_data="charge_superkey")],
+                [InlineKeyboardButton("شحن عبر زين كاش", callback_data="charge_zaincash")],
+                [InlineKeyboardButton("شحن عبر USDT", callback_data="charge_usdt")],
+                [InlineKeyboardButton("شحن عبر نقاط سنتات", callback_data="charge_cent_points")],
+                [InlineKeyboardButton("شحن عبر هلابي", callback_data="charge_helabi")],
+                [InlineKeyboardButton("رجوع", callback_data="show_ludo_services")]
+            ]
+            query.edit_message_text("رصيدك ليس كافياً.", reply_markup=InlineKeyboardMarkup(buttons))
+            return
+        context.user_data["selected_ludo_service"] = service_name
+        context.user_data["ludo_service_price"] = price
+        query.edit_message_text("أرسل آيدي لودو الخاص بك (أرقام فقط).", parse_mode="HTML")
+        return
+# اختيار خدمة ببجي
     if data.startswith("pubg_service_"):
         name = data[len("pubg_service_"):]
         base_price = pubg_services.get(name, 0)
@@ -1445,7 +1426,7 @@ def button_handler(update: Update, context: CallbackContext):
             when = at.strftime("%Y-%m-%d %H:%M")
             end = f" | تمّ: {ct.strftime('%Y-%m-%d %H:%M')}" if ct else ""
             api_part = f" | رقم API: {api_no}" if api_no else ""
-            cat_ara = {"smm":"سوشيال", "pubg":"ببجي", "itunes":"آيتونز", "telegram":"تليجرام", "ludo":"لودو"}.get(cat, cat or "-")
+            cat_ara = {"smm":"سوشيال", "pubg":"ببجي", "itunes":"آيتونز", "telegram":"تليجرام"}.get(cat, cat or "-")
             lines.append(f"#{oid} • {cat_ara} • {service} • {price}$ • {status} • {when}{end}{api_part}")
         # أزرار تنقل
         nav = []
@@ -1525,6 +1506,35 @@ def button_handler(update: Update, context: CallbackContext):
                 uname = f"@{username_i}" if username_i else "—"
                 lines.append(f'- <a href="tg://user?id:{inviter_id_i}">{full_name_i}</a> | {uname} | ID:{inviter_id_i} — دعا {cnt_i} مستخدم (مدفوعة: {paid_cnt_i})')
             query.edit_message_text("\n".join(lines), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_menu")]]), parse_mode="HTML")
+            return
+        # طلبات الخدمات المعلّقة (سوشيال/تلي)
+        if data == "pending_smm_orders":
+            pend = db_get_pending_orders(category_filter=["smm"])
+            if not pend:
+                query.edit_message_text("لا توجد طلبات خدمات معلّقة حالياً.",
+                                        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_menu")]]))
+            else:
+                text_msg = "الطلبات المعلّقة (الخدمات):\n\n"
+                kb = []
+                for (oid, uid, fn, un, cat, service, price, link, ts) in pend:
+                    text_msg += (f"{oid}) {fn} (@{un})\n"
+                                 f"   الخدمة: {service} | السعر: {price}$\n"
+                                 f"   الرابط: {link}\n\n")
+                    kb.append([
+                        InlineKeyboardButton(f"✅ تنفيذ #{oid}", callback_data=f"approve_smm_id_{oid}"),
+                        InlineKeyboardButton(f"❌ رفض #{oid}", callback_data=f"reject_smm_id_{oid}")
+                    ])
+                kb.append([InlineKeyboardButton("رجوع", callback_data="admin_menu")])
+                query.edit_message_text(text_msg, reply_markup=InlineKeyboardMarkup(kb))
+            return
+
+        if data.startswith("approve_smm_id_"):
+            try:
+                order_id = int(data.split("_")[-1])
+            except Exception:
+                query.answer("رقم طلب غير صالح.", show_alert=True)
+                return
+            approve_order_process_db(order_id, context, query)
             return
 
         if data.startswith("reject_smm_id_"):
@@ -2302,7 +2312,6 @@ def handle_messages(update: Update, context: CallbackContext):
         clear_all_waiting_flags(context); return
 
 
-
     # استقبال آيدي لودو بعد اختيار الخدمة
     if context.user_data.get("selected_ludo_service"):
         service_name = context.user_data.get("selected_ludo_service")
@@ -2318,7 +2327,7 @@ def handle_messages(update: Update, context: CallbackContext):
         users_balance[user_id] = round(bal - price, 2)
         sync_balance_to_db(user_id)
         add_user_spent(user_id, price)
-        order_id = db_add_order(user_id, full_name, username, "ludo", service_name, price, None, {"type":"ludo", "ludo_id": ludo_id})
+        db_add_order(user_id, full_name, username, "ludo", service_name, price, None, {"ludo_id": ludo_id})
         try:
             context.bot.send_message(
                 chat_id=ADMIN_ID,
@@ -2330,29 +2339,29 @@ def handle_messages(update: Update, context: CallbackContext):
             pass
         update.message.reply_text("✅ تم استلام طلب لودو. سنباشر التنفيذ قريباً.", reply_markup=main_menu_keyboard(user_id))
         clear_all_waiting_flags(context); return
-        if context.user_data.get("waiting_for_telegram_link"):
-            service_name = context.user_data.get("selected_telegram_service")
-            price = float(context.user_data.get("telegram_service_price", 0))
-            invite_link = text.strip()
-            if "t.me/" not in invite_link:
-                update.message.reply_text("الرجاء إرسال رابط دعوة صحيح مثل: https://t.me/+xxxxx"); return
-            bal = users_balance.get(user_id, 0.0)
-            if bal < price:
-                update.message.reply_text("رصيدك غير كافٍ حالياً.")
-                clear_all_waiting_flags(context); return
-            users_balance[user_id] = round(bal - price, 2)
-            sync_balance_to_db(user_id)
-            add_user_spent(user_id, price)
-            db_add_order(user_id, full_name, username, "smm", service_name, price, invite_link, {"type":"telegram"})
-            try:
-                context.bot.send_message(
-                    chat_id=ADMIN_ID,
-                    text=(f"🆕 طلب خدمة تلغرام:\n- المستخدم: {full_name} (@{username}) | ID: {user_id}\n"
-                          f"- الخدمة: {service_name} | السعر: {price}$\n- الرابط: {invite_link}"),
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("الطلبات المعلّقة (الخدمات)", callback_data="pending_smm_orders")]])
+    if context.user_data.get("waiting_for_telegram_link"):
+        service_name = context.user_data.get("selected_telegram_service")
+        price = float(context.user_data.get("telegram_service_price", 0))
+        invite_link = text.strip()
+        if "t.me/" not in invite_link:
+            update.message.reply_text("الرجاء إرسال رابط دعوة صحيح مثل: https://t.me/+xxxxx"); return
+        bal = users_balance.get(user_id, 0.0)
+        if bal < price:
+            update.message.reply_text("رصيدك غير كافٍ حالياً.")
+            clear_all_waiting_flags(context); return
+        users_balance[user_id] = round(bal - price, 2)
+        sync_balance_to_db(user_id)
+        add_user_spent(user_id, price)
+        db_add_order(user_id, full_name, username, "smm", service_name, price, invite_link, {"type":"telegram"})
+        try:
+            context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=(f"🆕 طلب خدمة تلغرام:\n- المستخدم: {full_name} (@{username}) | ID: {user_id}\n"
+                      f"- الخدمة: {service_name} | السعر: {price}$\n- الرابط: {invite_link}"),
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("الطلبات المعلّقة (الخدمات)", callback_data="pending_smm_orders")]])
             )
-            except Exception:
-                pass
+        except Exception:
+            pass
         update.message.reply_text("✅ تم استلام طلب خدمة التليجرام. سنباشر التنفيذ قريباً.", reply_markup=main_menu_keyboard(user_id))
         clear_all_waiting_flags(context); return
 
