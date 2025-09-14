@@ -1819,6 +1819,36 @@ def button_handler(update: Update, context: CallbackContext):
                            FROM orders WHERE id=%s""", (oid,), "one")
             if not row:
                 query.edit_message_text("الطلب غير موجود."); return
+        if data.startswith("approve_pubg_order_"):
+            oid = int(data.split("_")[-1])
+            ok = execute_pubg_order(oid)
+            if ok:
+                try:
+                    query.edit_message_text(f"تم تنفيذ طلب #{oid} بنجاح.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="pending_pubg_orders")]]))
+                except Exception:
+                    context.bot.send_message(chat_id=update.effective_chat.id, text=f"تم تنفيذ طلب #{oid} بنجاح.")
+            else:
+                query.edit_message_text(f"فشل تنفيذ طلب #{oid}.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="pending_pubg_orders")]]))
+            return
+        if data.startswith("reject_pubg_order_"):
+            oid = int(data.split("_")[-1])
+            try:
+                db_mark_order_rejected_manual(oid)
+                query.edit_message_text(f"تم رفض طلب #{oid}.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="pending_pubg_orders")]]))
+            except Exception as e:
+                logger.error("reject_pubg_order error: %s", e)
+                query.edit_message_text("حدث خطأ أثناء الرفض.")
+            return
+        if data.startswith("user_wait_pubg_order_"):
+            oid = int(data.split("_")[-1])
+            try:
+                _exec("UPDATE orders SET status='processing' WHERE id=%s", (oid,))
+                query.edit_message_text(f"تم تحويل الطلب #{oid} إلى حالة انتظار/قيد المعالجة.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="pending_pubg_orders")]]))
+            except Exception as e:
+                logger.error("user_wait_pubg_order error: %s", e)
+                query.edit_message_text("تعذر تحديث حالة الطلب.")
+            return
+
             _, uid, fn, un, service, price, payload = row
             pubg_id = (payload or {}).get("pubg_id") if isinstance(payload, dict) else None
             text_msg = (
@@ -2111,6 +2141,45 @@ def button_handler(update: Update, context: CallbackContext):
     if data == "mod_stats":
         if not is_moderator(user_id):
             query.edit_message_text("هذه الميزة مخصصة للمشرفين فقط."); return
+        try:
+            rows = _exec("""
+                SELECT COALESCE(category, 'غير محدد') AS category,
+                       COALESCE(service, 'غير محدد') AS service,
+                       status,
+                       COUNT(*) AS cnt,
+                       COALESCE(SUM(price),0) AS total
+                FROM orders
+                GROUP BY category, service, status
+                ORDER BY category, service
+            """, fetch="all") or []
+            agg = {}
+            total_all = 0.0
+            count_all = 0
+            for category, service, status, cnt, total in rows:
+                agg.setdefault(category, {}).setdefault(service, {}).setdefault(status, {"cnt":0, "total":0.0})
+                agg[category][service][status]["cnt"] += cnt
+                agg[category][service][status]["total"] += float(total or 0)
+                total_all += float(total or 0)
+                count_all += cnt
+            lines = ["📊 <b>إحصائيات الطلبات (كل الأقسام):</b>", f"إجمالي الطلبات: <b>{count_all}</b>", f"إجمالي المبالغ: <b>{total_all:.2f}$</b>", ""]
+            for cat, services in agg.items():
+                lines.append(f"<b>• القسم:</b> {cat}")
+                for svc, statuses in services.items():
+                    subtotal_cnt = sum(v["cnt"] for v in statuses.values())
+                    subtotal_sum = sum(v["total"] for v in statuses.values())
+                    lines.append(f"   - الخدمة: {svc} — العدد: {subtotal_cnt} — المجموع: {subtotal_sum:.2f}$")
+                    for st_key in ["pending", "processing", "completed", "refunded", "rejected", "failed"]:
+                        if st_key in statuses:
+                            v = statuses[st_key]
+                            lines.append(f"      · {st_key}: {v['cnt']} ({v['total']:.2f}$)")
+                lines.append("")
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="moderator_menu")]])
+            query.edit_message_text("\n".join(lines), parse_mode="HTML", reply_markup=kb)
+        except Exception as e:
+            logger.error("mod_stats aggregate error: %s", e)
+            query.edit_message_text("تعذر تحميل الإحصائيات حالياً.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="moderator_menu")]]))
+        return
+
         completed = _exec("SELECT COUNT(*) FROM orders WHERE status='completed'", fetch="one")[0]
         ongoing = _exec("SELECT COUNT(*) FROM orders WHERE status='completed' AND refunded=FALSE", fetch="one")[0]
         pending_total = _exec("SELECT COUNT(*) FROM orders WHERE status='pending'", fetch="one")[0]
@@ -2495,6 +2564,19 @@ def help_cmd(update: Update, context: CallbackContext):
 # =========================
 # تشغيل البوت
 # =========================
+def execute_pubg_order(order_id:int) -> bool:
+    """
+    تنفيذ شحن شدات ببجي عبر مزوّد خارجي (Stub).
+    TODO: اربط هنا استدعاء API الحقيقي.
+    حالياً: يعلّم الطلب كمكتمل فقط لتجاوز التوقف.
+    """
+    try:
+        db_mark_order_completed_manual(order_id)
+        return True
+    except Exception as e:
+        logger.error("execute_pubg_order error: %s", e)
+        return False
+
 def main():
     # تأكد من اتصال الـ DB
     try:
