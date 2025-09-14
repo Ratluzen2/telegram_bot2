@@ -1794,6 +1794,7 @@ def button_handler(update: Update, context: CallbackContext):
             return
 
         # طلبات ببجي
+        # طلبات ببجي
         if data == "pending_pubg_orders":
             pend = _exec("""SELECT id, user_id, full_name, username, service, price,
                                    COALESCE(payload->>'pubg_id','') AS pubg_id
@@ -1801,13 +1802,14 @@ def button_handler(update: Update, context: CallbackContext):
                             WHERE status='pending' AND category='pubg'
                             ORDER BY ordered_at ASC""", fetch="all") or []
             if not pend:
-                query.edit_message_text("لا توجد طلبات شدات ببجي معلقة حالياً.",
+                query.edit_message_text("لا توجد طلبات شدات ببجي معلّقة حالياً.",
                                         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_menu")]]))
             else:
                 text_msg = "طلبات شدات ببجي المعلقة:\n"
                 buttons = []
                 for (oid, uid, fn, un, service, price, pubg_id) in pend:
-                    text_msg += f"#{oid}) @{un} - الخدمة: {service}, الآيدي: {pubg_id}\n"
+                    user_line = f"{fn} (@{un})" if un else f"{fn}"
+                    text_msg += f"• #{oid} — {user_line} — {price}$ — ID:{pubg_id}\n"
                     buttons.append([InlineKeyboardButton(f"معالجة الطلب #{oid}", callback_data=f"process_pubg_order_{oid}")])
                 buttons.append([InlineKeyboardButton("رجوع", callback_data="admin_menu")])
                 query.edit_message_text(text_msg, reply_markup=InlineKeyboardMarkup(buttons))
@@ -1815,55 +1817,24 @@ def button_handler(update: Update, context: CallbackContext):
 
         if data.startswith("process_pubg_order_"):
             oid = int(data.split("_")[-1])
-            row = _exec("""SELECT id, user_id, full_name, username, service, price, payload
-                           FROM orders WHERE id=%s""", (oid,), "one")
+            row = _exec("""SELECT id, user_id, full_name, username, service, price, payload FROM orders WHERE id=%s""", (oid,), "one")
             if not row:
                 query.edit_message_text("الطلب غير موجود."); return
-        if data.startswith("approve_pubg_order_"):
-            oid = int(data.split("_")[-1])
-            ok = execute_pubg_order(oid)
-            if ok:
-                try:
-                    query.edit_message_text(f"تم تنفيذ طلب #{oid} بنجاح.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="pending_pubg_orders")]]))
-                except Exception:
-                    context.bot.send_message(chat_id=update.effective_chat.id, text=f"تم تنفيذ طلب #{oid} بنجاح.")
-            else:
-                query.edit_message_text(f"فشل تنفيذ طلب #{oid}.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="pending_pubg_orders")]]))
-            return
-        if data.startswith("reject_pubg_order_"):
-            oid = int(data.split("_")[-1])
-            try:
-                db_mark_order_rejected_manual(oid)
-                query.edit_message_text(f"تم رفض طلب #{oid}.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="pending_pubg_orders")]]))
-            except Exception as e:
-                logger.error("reject_pubg_order error: %s", e)
-                query.edit_message_text("حدث خطأ أثناء الرفض.")
-            return
-        if data.startswith("user_wait_pubg_order_"):
-            oid = int(data.split("_")[-1])
-            try:
-                _exec("UPDATE orders SET status='processing' WHERE id=%s", (oid,))
-                query.edit_message_text(f"تم تحويل الطلب #{oid} إلى حالة انتظار/قيد المعالجة.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="pending_pubg_orders")]]))
-            except Exception as e:
-                logger.error("user_wait_pubg_order error: %s", e)
-                query.edit_message_text("تعذر تحديث حالة الطلب.")
-            return
-
             _, uid, fn, un, service, price, payload = row
             pubg_id = (payload or {}).get("pubg_id") if isinstance(payload, dict) else None
             text_msg = (
-                f"تفاصيل طلب شحن شدات ببجي #{oid}:\n"
+                f"تفاصيل طلب شدات ببجي #{oid}:\n"
                 f"- المعرف: {uid}\n- الاسم: {fn}\n- يوزر: @{un}\n"
-                f"- الخدمة: {service}\n- السعر: {price}$\n- الآيدي: {pubg_id}\n\n"
+                f"- الخدمة: {service}\n- السعر: {price}$\n- آيدي ببجي: {pubg_id}\n\n"
                 "اختر الإجراء:"
             )
-            btns = [
+            kb = [
                 [InlineKeyboardButton("تم شحن الشدات", callback_data=f"approve_pubg_order_{oid}"),
-                 InlineKeyboardButton("تم الغاء شحن الشدات", callback_data=f"reject_pubg_order_{oid}")],
+                 InlineKeyboardButton("تم إلغاء الشحن", callback_data=f"reject_pubg_order_{oid}")],
                 [InlineKeyboardButton("انتظار المستخدم", callback_data=f"user_wait_pubg_order_{oid}")],
                 [InlineKeyboardButton("رجوع", callback_data="pending_pubg_orders")]
             ]
-            query.edit_message_text(text_msg, reply_markup=InlineKeyboardMarkup(btns))
+            query.edit_message_text(text_msg, reply_markup=InlineKeyboardMarkup(kb))
             return
 
         if data.startswith("approve_pubg_order_"):
@@ -1882,9 +1853,9 @@ def button_handler(update: Update, context: CallbackContext):
             row = _exec("SELECT user_id, price FROM orders WHERE id=%s", (oid,), "one")
             if row:
                 db_refund_order(oid, row[0], float(row[1]))
-                try: context.bot.send_message(chat_id=row[0], text="تم إلغاء طلب شحن شدات ببجي وإعادة المبلغ إلى حسابك.")
+                try: context.bot.send_message(chat_id=row[0], text="تم إلغاء طلب شدات ببجي وإعادة المبلغ إلى حسابك.")
                 except Exception: pass
-            query.edit_message_text("تم إلغاء طلب شحن شدات ببجي وإعادة المبلغ للمستخدم.",
+            query.edit_message_text("تم إلغاء طلب شدات ببجي وإعادة المبلغ للمستخدم.",
                                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="pending_pubg_orders")]]))
             return
 
@@ -1892,21 +1863,12 @@ def button_handler(update: Update, context: CallbackContext):
             oid = int(data.split("_")[-1])
             row = _exec("SELECT user_id FROM orders WHERE id=%s", (oid,), "one")
             if row:
-                try: context.bot.send_message(chat_id=row[0], text="سوف يتم تنفيذ طلبك قريبا")
+                try: context.bot.send_message(chat_id=row[0], text="سوف يتم تنفيذ طلبك (شدات ببجي) قريبًا.")
                 except Exception: pass
-            query.edit_message_text("تم إرسال إشعار الانتظار للمستخدم.",
+            _exec("UPDATE orders SET status='processing' WHERE id=%s", (oid,))
+            query.edit_message_text("تم تحويل الطلب إلى قيد المعالجة.",
                                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="pending_pubg_orders")]]))
             return
-
-        if data == "api_check_balance":
-            api_check_balance(update, context); return
-
-        if data == "api_order_status":
-            query.edit_message_text("أدخل رقم الطلب للتحقق من حالته عبر API:")
-            context.user_data["waiting_for_api_order_status"] = True
-            return
-
-        # طلبات لودو
         if data == "pending_ludo_orders":
             pend = _exec("""SELECT id, user_id, full_name, username, service, price,
                                    COALESCE(payload->>'ludo_id','') AS ludo_id
@@ -2158,23 +2120,23 @@ def button_handler(update: Update, context: CallbackContext):
 
                 STS = ["pending","processing","completed","refunded","rejected","failed"]
 
-STS_AR = {
-    "pending": "معلّق",
-    "processing": "قيد",
-    "completed": "مكتمل",
-    "refunded": "مسترد",
-    "rejected": "مرفوض",
-    "failed": "فشل"
-}
-def arabic_cat(cat:str) -> str:
-    c = (cat or "").lower()
-    if c == "pubg": return "ببجي"
-    if c == "ludo": return "لودو"
-    if c == "itunes": return "آيتونز"
-    if c == "smm": return "سوشيال"
-    if c == "other": return "أخرى"
-    return cat
-
+                STS_AR = {
+                "pending": "معلّق",
+                "processing": "قيد",
+                "completed": "مكتمل",
+                "refunded": "مسترد",
+                "rejected": "مرفوض",
+                "failed": "فشل"
+                }
+                def arabic_cat(cat:str) -> str:
+                    c = (cat or "").lower()
+                    if c == "pubg": return "ببجي"
+                    if c == "ludo": return "لودو"
+                    if c == "itunes": return "آيتونز"
+                    if c == "smm": return "سوشيال"
+                    if c == "other": return "أخرى"
+                    return cat
+                    
                 agg = {}
                 for cat, st, cnt, tot in rows:
                     d = agg.setdefault(cat, {})
@@ -2208,45 +2170,6 @@ def arabic_cat(cat:str) -> str:
                 logger.error("mod_stats compact table error: %s", e)
                 query.edit_message_text("تعذر تحميل الإحصائيات.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="moderator_menu")]]))
             return
-
-        try:
-            rows = _exec("""
-                SELECT COALESCE(category, 'غير محدد') AS category,
-                       COALESCE(service, 'غير محدد') AS service,
-                       status,
-                       COUNT(*) AS cnt,
-                       COALESCE(SUM(price),0) AS total
-                FROM orders
-                GROUP BY category, service, status
-                ORDER BY category, service
-            """, fetch="all") or []
-            agg = {}
-            total_all = 0.0
-            count_all = 0
-            for category, service, status, cnt, total in rows:
-                agg.setdefault(category, {}).setdefault(service, {}).setdefault(status, {"cnt":0, "total":0.0})
-                agg[category][service][status]["cnt"] += cnt
-                agg[category][service][status]["total"] += float(total or 0)
-                total_all += float(total or 0)
-                count_all += cnt
-            lines = ["📊 <b>إحصائيات الطلبات (كل الأقسام):</b>", f"إجمالي الطلبات: <b>{count_all}</b>", f"إجمالي المبالغ: <b>{total_all:.2f}$</b>", ""]
-            for cat, services in agg.items():
-                lines.append(f"<b>• القسم:</b> {cat}")
-                for svc, statuses in services.items():
-                    subtotal_cnt = sum(v["cnt"] for v in statuses.values())
-                    subtotal_sum = sum(v["total"] for v in statuses.values())
-                    lines.append(f"   - الخدمة: {svc} — العدد: {subtotal_cnt} — المجموع: {subtotal_sum:.2f}$")
-                    for st_key in ["pending", "processing", "completed", "refunded", "rejected", "failed"]:
-                        if st_key in statuses:
-                            v = statuses[st_key]
-                            lines.append(f"      · {st_key}: {v['cnt']} ({v['total']:.2f}$)")
-                lines.append("")
-            kb = InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="moderator_menu")]])
-            query.edit_message_text("\n".join(lines), parse_mode="HTML", reply_markup=kb)
-        except Exception as e:
-            logger.error("mod_stats aggregate error: %s", e)
-            query.edit_message_text("تعذر تحميل الإحصائيات حالياً.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="moderator_menu")]]))
-        return
 
         completed = _exec("SELECT COUNT(*) FROM orders WHERE status='completed'", fetch="one")[0]
         ongoing = _exec("SELECT COUNT(*) FROM orders WHERE status='completed' AND refunded=FALSE", fetch="one")[0]
@@ -2683,4 +2606,3 @@ def get_effective_price(user_id: int, service_name: str, base_price: float, kind
     except Exception as e:
         logger.error("get_effective_price error: %s", e)
         return float(base_price)
-
