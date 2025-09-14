@@ -682,6 +682,20 @@ def get_effective_price(user_id: int, service_name: str, base_price: float, kind
         logger.error("get_effective_price error: %s", e)
         return base_price
 
+
+# =========================
+# خصومات المشرفين (10% خصم ثابت على جميع الخدمات للمشرفين فقط)
+# =========================
+def get_effective_price(user_id: int, service_name: str, base_price: float, kind: str = "generic") -> float:
+    try:
+        bp = float(base_price)
+        if is_moderator(user_id):
+            return round(bp * 0.90, 2)
+        return bp
+    except Exception as e:
+        logger.error("get_effective_price error: %s", e)
+        return float(base_price)
+
 # =========================
 # لوحات المفاتيح (Keyboards)
 # =========================
@@ -1328,7 +1342,7 @@ def button_handler(update: Update, context: CallbackContext):
     if data.startswith("pubg_service_"):
         name = data[len("pubg_service_"):]
         base_price = pubg_services.get(name, 0)
-        price = get_effective_price(user_id, name, base_price, "pubg")
+        price = get_effective_price(user_id, service_name, base_price, "pubg")
         current_balance = users_balance.get(user_id, 0.0)
         if current_balance < price:
             buttons = [
