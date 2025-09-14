@@ -616,6 +616,7 @@ def db_add_order(user_id:int, full_name:str, username:str, category:str, service
                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'pending',NOW())
                    RETURNING id""",
                  (user_id, full_name, username, category, service, price, link, psycopg.types.json.Json(payload) if payload else None),
+                 "one")
     return int(row[0])
 
 def db_get_pending_orders(category_filter:Optional[List[str]]=None):
