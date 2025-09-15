@@ -2753,8 +2753,8 @@ def main():
 
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(CommandHandler("help", help_cmd))
+    dp.add_handler(CallbackQueryHandler(mobile_button_handler, pattern=r"^(show_mobile_recharge|mobile_service_|pending_mobile_orders|process_mobile_|mobile_wait_|mobile_complete_|mobile_cancel_)"))
     dp.add_handler(CallbackQueryHandler(button_handler))
-    dp.add_handler(CallbackQueryHandler(mobile_button_handler))
     dp.add_handler(MessageHandler((Filters.text | Filters.photo | Filters.video | Filters.voice) & ~Filters.command, handle_messages))
 
     updater.start_polling()
