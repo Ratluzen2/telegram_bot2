@@ -2623,46 +2623,6 @@ def help_cmd(update: Update, context: CallbackContext):
 # =========================
 # تشغيل البوت
 # =========================
-def main():
-    # تأكد من اتصال الـ DB
-    try:
-        with pg_pool.connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT 1")
-                cur.fetchone()
-        logger.info("✅ تم الاتصال بقاعدة البيانات بنجاح.")
-    except Exception as e:
-        logger.exception("❌ فشل الاتصال بقاعدة البيانات: %s", e)
-        raise
-
-    updater = Updater(TOKEN, use_context=True)
-    dp = updater.dispatcher
-
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CommandHandler("help", help_cmd))
-    dp.add_handler(CallbackQueryHandler(button_handler))
-    dp.add_handler(CallbackQueryHandler(mobile_button_handler))
-    dp.add_handler(MessageHandler((Filters.text | Filters.photo | Filters.video | Filters.voice) & ~Filters.command, handle_messages))
-
-    updater.start_polling()
-    updater.idle()
-
-if __name__ == "__main__":
-    main()
-
-
-# =========================
-# خصومات المشرفين (جديد – خصم ثابت 10% للمشرفين فقط)
-# =========================
-def get_effective_price(user_id: int, service_name: str, base_price: float, kind: str = "generic") -> float:
-    try:
-        if is_moderator(user_id):
-            return round(float(base_price) * 0.90, 2)
-        return float(base_price)
-    except Exception as e:
-        logger.error("get_effective_price error: %s", e)
-        return float(base_price)
-
 
 # ===== Handlers قسم شراء رصيد الهاتف (مستقل) =====
 def mobile_button_handler(update: Update, context: CallbackContext):
@@ -2775,3 +2735,44 @@ def mobile_button_handler(update: Update, context: CallbackContext):
         query.edit_message_text("تم إلغاء طلب رصيد الهاتف وإعادة المبلغ للمستخدم.",
                                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="pending_mobile_orders")]]))
         return
+
+def main():
+    # تأكد من اتصال الـ DB
+    try:
+        with pg_pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+                cur.fetchone()
+        logger.info("✅ تم الاتصال بقاعدة البيانات بنجاح.")
+    except Exception as e:
+        logger.exception("❌ فشل الاتصال بقاعدة البيانات: %s", e)
+        raise
+
+    updater = Updater(TOKEN, use_context=True)
+    dp = updater.dispatcher
+
+    dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(CommandHandler("help", help_cmd))
+    dp.add_handler(CallbackQueryHandler(button_handler))
+    dp.add_handler(CallbackQueryHandler(mobile_button_handler))
+    dp.add_handler(MessageHandler((Filters.text | Filters.photo | Filters.video | Filters.voice) & ~Filters.command, handle_messages))
+
+    updater.start_polling()
+    updater.idle()
+
+if __name__ == "__main__":
+    main()
+
+
+# =========================
+# خصومات المشرفين (جديد – خصم ثابت 10% للمشرفين فقط)
+# =========================
+def get_effective_price(user_id: int, service_name: str, base_price: float, kind: str = "generic") -> float:
+    try:
+        if is_moderator(user_id):
+            return round(float(base_price) * 0.90, 2)
+        return float(base_price)
+    except Exception as e:
+        logger.error("get_effective_price error: %s", e)
+        return float(base_price)
+
