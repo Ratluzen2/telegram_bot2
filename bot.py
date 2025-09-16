@@ -727,6 +727,7 @@ def admin_menu_keyboard():
         [InlineKeyboardButton("الكارتات المعلقة", callback_data="pending_cards")],
         [InlineKeyboardButton("طلبات شدات ببجي", callback_data="pending_pubg_orders")],
         [InlineKeyboardButton("طلبات شحن الايتونز", callback_data="pending_itunes_orders")],
+        [InlineKeyboardButton("طلبات الارصدة المعلقة", callback_data="pending_mobile_orders")],
         [InlineKeyboardButton("طلبات لودو المعلقة", callback_data="pending_ludo_orders")],
         [InlineKeyboardButton("إضافة الرصيد", callback_data="admin_add_balance"), InlineKeyboardButton("خصم الرصيد", callback_data="admin_discount")],
         [InlineKeyboardButton("فحص رصيد API", callback_data="api_check_balance"), InlineKeyboardButton("فحص حالة طلب API", callback_data="api_order_status")],
@@ -741,6 +742,34 @@ def admin_menu_keyboard():
     buttons.append([InlineKeyboardButton("المتصدرين🎉", callback_data="show_leaderboard")])
     return InlineKeyboardMarkup(buttons)
 
+
+# ======= خدمات شراء رصيد الهاتف (قسم جديد) =======
+mobile_recharge_services = {
+    "شراء رصيد 2دولار اثير": 2.0,
+    "شراء رصيد 5دولار اثير": 5.0,
+    "شراء رصيد 10دولار اثير": 10.0,
+    "شراء رصيد 15دولار اثير": 15.0,
+    "شراء رصيد 40دولار اثير": 40.0,
+    "شراء رصيد 2دولار اسيا": 2.0,
+    "شراء رصيد 5دولار اسيا": 5.0,
+    "شراء رصيد 10دولار اسيا": 10.0,
+    "شراء رصيد 15دولار اسيا": 15.0,
+    "شراء رصيد 40دولار اسيا": 40.0,
+    "شراء رصيد 2دولار كورك": 2.0,
+    "شراء رصيد 5دولار كورك": 5.0,
+    "شراء رصيد 10دولار كورك": 10.0,
+    "شراء رصيد 15دولار كورك": 15.0,
+    "شراء رصيد 40دولار كورك": 40.0,
+}
+
+def mobile_recharge_services_keyboard(user_id: int):
+    buttons = []
+    for service_name, base_price in mobile_recharge_services.items():
+        eff = get_effective_price(user_id, service_name, base_price, "mobile")
+        buttons.append([InlineKeyboardButton(f"{service_name} - {eff}$", callback_data=f"mobile_service_{service_name}")])
+    buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
+    return InlineKeyboardMarkup(buttons)
+
 def services_menu_keyboard():
     buttons = [
         [InlineKeyboardButton("قسم المتابعين", callback_data="show_followers")],
@@ -750,6 +779,7 @@ def services_menu_keyboard():
         [InlineKeyboardButton("قسم شحن شدات ببجي", callback_data="show_pubg")],
         [InlineKeyboardButton("رفع سكور تيكتوك", callback_data="show_tiktok_score")],
         [InlineKeyboardButton("قسم شراء رصيد ايتونز", callback_data="show_itunes_services")],
+        [InlineKeyboardButton("قسم شراء رصيد الهاتف", callback_data="show_mobile_recharge")],
         [InlineKeyboardButton("خدمات التليجرام", callback_data="show_telegram_services")],
         [InlineKeyboardButton("خدمات لودو", callback_data="show_ludo_services")],
         [InlineKeyboardButton("رجوع", callback_data="back_main")]
@@ -799,7 +829,7 @@ def clear_all_waiting_flags(context: CallbackContext):
         "waiting_for_broadcast", "waiting_for_api_order_status", "selected_service", "service_price",
         "selected_pubg_service", "pubg_service_price", "selected_ludo_service", "ludo_service_price", "card_to_approve", "card_to_approve_id", "waiting_for_amount",
         "selected_itunes_service", "itunes_service_price", "waiting_for_itunes_confirm",
-        "waiting_for_itunes_code", "itunes_to_complete_id",
+        "waiting_for_itunes_code", "itunes_to_complete_id", "selected_mobile_service", "mobile_service_price", "waiting_for_mobile_confirm", "waiting_for_mobile_code", "mobile_to_complete_id",
         "selected_telegram_service", "telegram_service_price", "waiting_for_telegram_link",
         "waiting_for_new_mod", "waiting_for_remove_mod", "admin_target_id",
         "score_map",
@@ -2165,6 +2195,51 @@ def handle_messages(update: Update, context: CallbackContext):
     username = update.effective_user.username or "NoUsername"
     text = update.message.text or ""
 
+    # تأكيد طلب رصيد الهاتف من المستخدم
+    if context.user_data.get("waiting_for_mobile_confirm"):
+        if text.strip() == "1":
+            service_name = context.user_data.get("selected_mobile_service")
+            price = float(context.user_data.get("mobile_service_price", 0))
+            bal = users_balance.get(user_id, 0.0)
+            if bal < price:
+                update.message.reply_text("رصيدك غير كافٍ حالياً. قم بالشحن أولاً.")
+                clear_all_waiting_flags(context); return
+            users_balance[user_id] = round(bal - price, 2)
+            sync_balance_to_db(user_id)
+            add_user_spent(user_id, price)
+            order_id = db_add_order(user_id, full_name, username, "mobile", service_name, price, None, {})
+            try:
+                context.bot.send_message(
+                    chat_id=ADMIN_ID,
+                    text=(f"🆕 طلب رصيد هاتف:\n"
+                          f"- المستخدم: {full_name} (@{username}) | ID: {user_id}\n"
+                          f"- الخدمة: {service_name} | السعر: {price}$\n- رقم الطلب: #{order_id}"),
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("طلبات الارصدة المعلقة", callback_data="pending_mobile_orders")]])
+                )
+            except Exception:
+                pass
+            update.message.reply_text("✅ تم استلام طلبك. سيتم إرسال رقم الكارت لك قريباً.", reply_markup=main_menu_keyboard(user_id))
+        else:
+            update.message.reply_text("تم إلغاء العملية.")
+        clear_all_waiting_flags(context); return
+
+    # المالك يرسل رقم الكارت لإكمال الطلب
+    if user_id == ADMIN_ID and context.user_data.get("waiting_for_mobile_code"):
+        oid = context.user_data.get("mobile_to_complete_id")
+        code = text.strip()
+        row = _exec("SELECT user_id FROM orders WHERE id=%s AND category='mobile'", (oid,), "one")
+        if row:
+            try:
+                context.bot.send_message(chat_id=row[0], text=f"🎁 رقم الكارت الخاص بك:\n{code}")
+            except Exception as e:
+                logger.error("Failed to send mobile code: %s", e)
+            _exec("UPDATE orders SET status='completed', completed_at=NOW(), payload = COALESCE(payload,'{}'::jsonb) || %s::jsonb WHERE id=%s",
+                  (psycopg.types.json.Json({"card_number": code}), oid))
+            update.message.reply_text("تم إرسال رقم الكارت للمستخدم.")
+        else:
+            update.message.reply_text("طلب غير صالح.")
+        clear_all_waiting_flags(context); return
+
     # --- أوضاع المالك ---
     if user_id == ADMIN_ID and context.user_data.get("waiting_for_add_balance_user_id"):
         target_input = text.strip()
@@ -2548,6 +2623,119 @@ def help_cmd(update: Update, context: CallbackContext):
 # =========================
 # تشغيل البوت
 # =========================
+
+# ===== Handlers قسم شراء رصيد الهاتف (مستقل) =====
+def mobile_button_handler(update: Update, context: CallbackContext):
+    query = update.callback_query
+    user_id = query.from_user.id
+    data = query.data
+
+    # فتح قسم شراء رصيد الهاتف
+    if data == "show_mobile_recharge":
+        try:
+            query.edit_message_text("اختر خدمة رصيد الهاتف المطلوبة:", reply_markup=mobile_recharge_services_keyboard(user_id))
+        except Exception:
+            context.bot.send_message(chat_id=update.effective_chat.id, text="اختر خدمة رصيد الهاتف المطلوبة:", reply_markup=mobile_recharge_services_keyboard(user_id))
+        return
+
+    # اختيار خدمة رصيد الهاتف
+    if data.startswith("mobile_service_"):
+        service_name = data[len("mobile_service_"):]
+        base_price = mobile_recharge_services.get(service_name, 0.0)
+        price = get_effective_price(user_id, service_name, base_price, "mobile")
+        current_balance = users_balance.get(user_id, 0.0)
+        if current_balance < price:
+            try:
+                buttons = [
+                    [InlineKeyboardButton("شحن عبر اسياسيل", callback_data="charge_asiacell")],
+                    [InlineKeyboardButton("شحن عبر سوبركي", callback_data="charge_superkey")],
+                    [InlineKeyboardButton("شحن عبر زين كاش", callback_data="charge_zaincash")],
+                    [InlineKeyboardButton("شحن عبر USDT", callback_data="charge_usdt")],
+                    [InlineKeyboardButton("شحن عبر نقاط سنتات", callback_data="charge_cent_points")],
+                    [InlineKeyboardButton("شحن عبر هلابي", callback_data="charge_helabi")],
+                    [InlineKeyboardButton("رجوع", callback_data="show_mobile_recharge")]
+                ]
+                query.edit_message_text("رصيدك ليس كافياً.", reply_markup=InlineKeyboardMarkup(buttons))
+            except Exception:
+                context.bot.send_message(chat_id=update.effective_chat.id, text="رصيدك ليس كافياً.")
+            return
+        context.user_data["selected_mobile_service"] = service_name
+        context.user_data["mobile_service_price"] = price
+        try:
+            query.edit_message_text(f"تم اختيار الخدمة: {service_name}\n\nارسل رقم 1 لتأكيد طلبك")
+        except Exception:
+            context.bot.send_message(chat_id=update.effective_chat.id, text=f"تم اختيار الخدمة: {service_name}\n\nارسل رقم 1 لتأكيد طلبك")
+        context.user_data["waiting_for_mobile_confirm"] = True
+        return
+
+    # لوحة تحكم المالك: طلبات الارصدة المعلقة
+    if data == "pending_mobile_orders" and user_id == ADMIN_ID:
+        pend = db_get_pending_orders(category_filter=["mobile"])
+        if not pend:
+            query.edit_message_text("لا توجد طلبات رصيد هاتف معلّقة حالياً.",
+                                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_menu")]]))
+        else:
+            text_msg = "طلبات رصيد الهاتف المعلّقة:\n\n"
+            kb = []
+            for (oid, uid, fn, un, cat, service, price, link, ts) in pend:
+                text_msg += (f"{oid}) {fn} (@{un})\n"
+                             f"   الخدمة: {service} | السعر: {price}$\n\n")
+                kb.append([InlineKeyboardButton(f"ادارة #{oid}", callback_data=f"process_mobile_{oid}")])
+            kb.append([InlineKeyboardButton("رجوع", callback_data="admin_menu")])
+            query.edit_message_text(text_msg, reply_markup=InlineKeyboardMarkup(kb))
+        return
+
+    if data.startswith("process_mobile_") and user_id == ADMIN_ID:
+        oid = int(data.split("_")[-1])
+        row = _exec("""SELECT id, user_id, full_name, username, service, price
+                       FROM orders WHERE id=%s""", (oid,), "one")
+        if not row:
+            query.edit_message_text("طلب غير موجود."); return
+        _, uid, fn, un, service, price = row
+        text_msg = (
+            f"تفاصيل طلب رصيد هاتف #{oid}:\n"
+            f"- المعرف: {uid}\n- الاسم: {fn}\n- يوزر: @{un}\n"
+            f"- الخدمة: {service}\n- السعر: {price}$\n\n"
+            "اختر الإجراء:"
+        )
+        btns = [
+            [InlineKeyboardButton("انتظار المستخدم", callback_data=f"mobile_wait_{oid}")],
+            [InlineKeyboardButton("اكمال الطلب", callback_data=f"mobile_complete_{oid}")],
+            [InlineKeyboardButton("الغاء الطلب", callback_data=f"mobile_cancel_{oid}")],
+            [InlineKeyboardButton("رجوع", callback_data="pending_mobile_orders")]
+        ]
+        query.edit_message_text(text_msg, reply_markup=InlineKeyboardMarkup(btns))
+        return
+
+    if data.startswith("mobile_wait_") and user_id == ADMIN_ID:
+        oid = int(data.split("_")[-1])
+        row = _exec("SELECT user_id FROM orders WHERE id=%s", (oid,), "one")
+        if row:
+            try: context.bot.send_message(chat_id=row[0], text="سيتم إرسال رقم الكارت لك قريباً.")
+            except Exception: pass
+        query.edit_message_text("تم إرسال إشعار الانتظار للمستخدم.",
+                                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="pending_mobile_orders")]]))
+        return
+
+    if data.startswith("mobile_complete_") and user_id == ADMIN_ID:
+        oid = int(data.split("_")[-1])
+        query.edit_message_text("أرسل الآن رقم الكارت للمستخدم:",
+                                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="pending_mobile_orders")]]))
+        context.user_data["mobile_to_complete_id"] = oid
+        context.user_data["waiting_for_mobile_code"] = True
+        return
+
+    if data.startswith("mobile_cancel_") and user_id == ADMIN_ID:
+        oid = int(data.split("_")[-1])
+        row = _exec("SELECT user_id, price FROM orders WHERE id=%s", (oid,), "one")
+        if row:
+            db_refund_order(oid, row[0], float(row[1]))
+            try: context.bot.send_message(chat_id=row[0], text="تم إلغاء طلب رصيد الهاتف وإعادة المبلغ لرصيدك.")
+            except Exception: pass
+        query.edit_message_text("تم إلغاء طلب رصيد الهاتف وإعادة المبلغ للمستخدم.",
+                                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="pending_mobile_orders")]]))
+        return
+
 def main():
     # تأكد من اتصال الـ DB
     try:
@@ -2565,6 +2753,7 @@ def main():
 
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(CommandHandler("help", help_cmd))
+    dp.add_handler(CallbackQueryHandler(mobile_button_handler, pattern=r"^(show_mobile_recharge|mobile_service_|pending_mobile_orders|process_mobile_|mobile_wait_|mobile_complete_|mobile_cancel_)"))
     dp.add_handler(CallbackQueryHandler(button_handler))
     dp.add_handler(MessageHandler((Filters.text | Filters.photo | Filters.video | Filters.voice) & ~Filters.command, handle_messages))
 
