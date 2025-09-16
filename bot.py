@@ -390,47 +390,6 @@ def db_set_service_override(service_name: str, service_id: str, quantity_multipl
 def db_delete_service_override(service_name: str):
     _exec("DELETE FROM service_api_overrides WHERE service_name=%s", (service_name,))
 
-
-
-# === جدول أسعار مخصصة لكل خدمة (Price Overrides) ===
-_exec("""CREATE TABLE IF NOT EXISTS service_price_overrides (
-    service_name TEXT PRIMARY KEY,
-    price REAL
-)""")
-
-def db_get_price_override(service_name: str):
-    row = _exec("SELECT price FROM service_price_overrides WHERE service_name=%s", (service_name,), "one")
-    if not row:
-        return None
-    try:
-        return float(row[0]) if row[0] is not None else None
-    except Exception:
-        return None
-
-def db_set_price_override(service_name: str, price: float):
-    _exec("""INSERT INTO service_price_overrides (service_name, price)
-             VALUES (%s,%s)
-             ON CONFLICT(service_name) DO UPDATE SET price=EXCLUDED.price""", (service_name, float(price)))
-
-def db_delete_price_override(service_name: str):
-    _exec("DELETE FROM service_price_overrides WHERE service_name=%s", (service_name,))
-
-# تحديث/تعديل الكمية فقط دون فقدان service_id في جدول overrides
-def db_update_quantity_only(service_name: str, new_q: int):
-    # احفظ service_id الحالي إن وجد
-    current = db_get_service_override(service_name) or {}
-    sid = current.get("service_id") or (service_api_mapping.get(service_name) or {}).get("service_id")
-    qm = int(new_q)
-    if not sid:
-        # في حال عدم وجود sid، نحاول أخذ الافتراضي من القاموس
-        sid = (service_api_mapping.get(service_name) or {}).get("service_id")
-    if sid is None:
-        sid = ""
-    _exec("""INSERT INTO service_api_overrides (service_name, service_id, quantity_multiplier)
-             VALUES (%s,%s,%s)
-             ON CONFLICT(service_name) DO UPDATE SET service_id=EXCLUDED.service_id, quantity_multiplier=EXCLUDED.quantity_multiplier""",
-          (service_name, str(sid), int(qm)))
-
 # نظام الإحالة
 REFERRAL_COMMISSION_USD = 0.10
 
@@ -776,8 +735,7 @@ def admin_menu_keyboard():
         [InlineKeyboardButton("حضر المستخدم", callback_data="block_user"), InlineKeyboardButton("الغاء حظر المستخدم", callback_data="unblock_user")],
         [InlineKeyboardButton("اعلان البوت", callback_data="admin_announce")],
         [InlineKeyboardButton("أكواد خدمات API", callback_data="admin_service_codes")],
-        [InlineKeyboardButton("نظام الإحالة", callback_data="admin_referrals")],
-        [InlineKeyboardButton("الأسعار والكميات", callback_data="admin_price_qty")]
+        [InlineKeyboardButton("نظام الإحالة", callback_data="admin_referrals")]
     ]
     buttons.append([InlineKeyboardButton("شرح الخصومات", callback_data="admin_discounts_info")])
     buttons.append([InlineKeyboardButton("المتصدرين🎉", callback_data="show_leaderboard")])
@@ -845,8 +803,8 @@ def clear_all_waiting_flags(context: CallbackContext):
         "selected_telegram_service", "telegram_service_price", "waiting_for_telegram_link",
         "waiting_for_new_mod", "waiting_for_remove_mod", "admin_target_id",
         "score_map",
-        "my_orders_offset", "waiting_for_bulk_service_code", "__target_services__", "__groups__", "waiting_edit_price_for", "waiting_edit_qty_for", "__prq_list__", "__prq_cat__"
-    , "__prq_offset__", "__prq_pick_idx__"]
+        "my_orders_offset", "waiting_for_bulk_service_code", "__target_services__", "__groups__"
+    ]
     for key in waiting_keys:
         context.user_data.pop(key, None)
 
@@ -1542,182 +1500,13 @@ def button_handler(update: Update, context: CallbackContext):
         return
 
     if user_id == ADMIN_ID:
-        # ======= محرر أكواد الخدمات \(API\) =======
-
-
-
-
-# ======= محرر أكواد الخدمات (API) =======
-        
-if data == "admin_service_codes":
-    kb = []
-    names = []
-    display = ["🛠️ اختر مجموعة لتعديل كود الـAPI لها (أرسل رقمًا واحدًا فقط):\n"]
-    # أمثلة لمجموعات الخدمات (عدّل حسب مشروعك)
-    groups = [
-        ("SMM عامة", "grp_smm"),
-        ("PUBG", "grp_pubg"),
-        ("iTunes", "grp_itunes"),
-        ("Telegram", "grp_telegram"),
-        ("Ludo", "grp_ludo"),
-    ]
-    for i, (title, code) in enumerate(groups, start=1):
-        display.append(f"{i}) {title}")
-        kb.append([InlineKeyboardButton(f"{i}", callback_data=f"sc_pick_{i-1}")])
-        names.append(code)
-    context.user_data["__sc_groups__"] = names
-    query.edit_message_text("\n".join(display), reply_markup=InlineKeyboardMarkup(kb))
-    return
-
-# ======= الأسعار والكميات (لوحة المالك) =======
-
-        # ======= الأسعار والكميات (لوحة المالك) =======
-        if data == "admin_price_qty":
-            kb = [
-                [InlineKeyboardButton("سوشيال (SMM)", callback_data="prq_cat_smm")],
-                [InlineKeyboardButton("ببجي", callback_data="prq_cat_pubg"), InlineKeyboardButton("آيتونز", callback_data="prq_cat_itunes")],
-                [InlineKeyboardButton("تليجرام", callback_data="prq_cat_telegram"), InlineKeyboardButton("لودو", callback_data="prq_cat_ludo")],
-                [InlineKeyboardButton("رجوع", callback_data="admin_menu")]
-            ]
-            query.edit_message_text("اختر القسم الذي تريد تعديل أسعاره/كمياته:", reply_markup=InlineKeyboardMarkup(kb))
-            return
-
-        if data.startswith("prq_cat_"):
-            cat = data.split("_", 2)[-1]
-            context.user_data["__prq_cat__"] = cat
-            context.user_data["__prq_list__"] = _prq_list_services(cat)
-            context.user_data["__prq_offset__"] = 0
-            txt, kb = _prq_render_page(context, 0)
-            query.edit_message_text(txt, reply_markup=kb)
-            return
-
-        if data.startswith("prq_page_"):
-            try:
-                _, _, off = data.split("_", 2)
-                off = int(off)
-            except Exception:
-                off = 0
-            context.user_data["__prq_offset__"] = max(0, off)
-            txt, kb = _prq_render_page(context, off)
-            query.edit_message_text(txt, reply_markup=kb)
-            return
-
-        if data.startswith("prq_pick_"):
-            idx = int(data.split("_")[-1])
-            cat = context.user_data.get("__prq_cat__") or "smm"
-            lst = context.user_data.get("__prq_list__", [])
-            if idx < 0 or idx >= len(lst):
-                query.answer("العنصر غير موجود.", show_alert=True); return
-            name, base_price = lst[idx]
-            context.user_data["__prq_pick_idx__"] = idx
-            query.edit_message_text(_prq_render_item(cat, name, base_price), reply_markup=_prq_item_kb(cat, idx))
-            return
-
-        if data.startswith("prq_edit_price_"):
-            idx = int(data.split("_")[-1])
-            lst = context.user_data.get("__prq_list__", [])
-            if idx < 0 or idx >= len(lst):
-                query.answer("غير موجود.", show_alert=True); return
-            name, _ = lst[idx]
-            context.user_data["waiting_edit_price_for"] = name
-            query.edit_message_text(f"✏️ أرسل السعر الجديد بالدولار للخدمة:\n{name}\nمثال: 3.75\n\nأرسل 'الغاء' للإلغاء.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data=f"prq_pick_{idx}")]]))
-            return
-
-        if data.startswith("prq_edit_qty_"):
-            idx = int(data.split("_")[-1])
-            lst = context.user_data.get("__prq_list__", [])
-            if idx < 0 or idx >= len(lst):
-                query.answer("غير موجود.", show_alert=True); return
-            name, _ = lst[idx]
-            context.user_data["waiting_edit_qty_for"] = name
-            query.edit_message_text(f"✏️ أرسل الكمية الجديدة (quantity_multiplier) للخدمة:\n{name}\nمثال: 5000\n\nأرسل 'الغاء' للإلغاء.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data=f"prq_pick_{idx}")]]))
-            return
-
-        if data.startswith("prq_del_price_"):
-            idx = int(data.split("_")[-1])
-            lst = context.user_data.get("__prq_list__", [])
-            if idx < 0 or idx >= len(lst):
-                query.answer("غير موجود.", show_alert=True); return
-            name, _ = lst[idx]
-            db_delete_price_override(name)
-            query.answer("تم حذف السعر المخصص.")
-            # إعادة عرض العنصر
-            cat = context.user_data.get("__prq_cat__","smm")
-            query.edit_message_text("تم حذف السعر المخصص. اختر العملية:", reply_markup=_prq_item_kb(cat, idx))
-            return
-    kb = [
-        [InlineKeyboardButton("سوشيال (SMM)", callback_data="prq_cat_smm")],
-        [InlineKeyboardButton("ببجي", callback_data="prq_cat_pubg"), InlineKeyboardButton("آيتونز", callback_data="prq_cat_itunes")],
-        [InlineKeyboardButton("تليجرام", callback_data="prq_cat_telegram"), InlineKeyboardButton("لودو", callback_data="prq_cat_ludo")],
-        [InlineKeyboardButton("رجوع", callback_data="admin_menu")]
-    ]
-    query.edit_message_text("اختر القسم الذي تريد تعديل أسعاره/كمياته:", reply_markup=InlineKeyboardMarkup(kb))
-    return
-
-if data.startswith("prq_cat_"):
-    cat = data.split("_", 2)[-1]
-    context.user_data["__prq_cat__"] = cat
-    context.user_data["__prq_list__"] = _prq_list_services(cat)
-    context.user_data["__prq_offset__"] = 0
-    txt, kb = _prq_render_page(context, 0)
-    query.edit_message_text(txt, reply_markup=kb)
-    return
-
-if data.startswith("prq_page_"):
-    try:
-        _, _, off = data.split("_", 2)
-        off = int(off)
-    except Exception:
-        off = 0
-    context.user_data["__prq_offset__"] = max(0, off)
-    txt, kb = _prq_render_page(context, off)
-    query.edit_message_text(txt, reply_markup=kb)
-    return
-
-if data.startswith("prq_pick_"):
-    idx = int(data.split("_")[-1])
-    cat = context.user_data.get("__prq_cat__") or "smm"
-    lst = context.user_data.get("__prq_list__", [])
-    if idx < 0 or idx >= len(lst):
-        query.answer("العنصر غير موجود.", show_alert=True); return
-    name, base_price = lst[idx]
-    context.user_data["__prq_pick_idx__"] = idx
-    query.edit_message_text(_prq_render_item(cat, name, base_price), reply_markup=_prq_item_kb(cat, idx))
-    return
-
-if data.startswith("prq_edit_price_"):
-    idx = int(data.split("_")[-1])
-    lst = context.user_data.get("__prq_list__", [])
-    if idx < 0 or idx >= len(lst):
-        query.answer("غير موجود.", show_alert=True); return
-    name, _ = lst[idx]
-    context.user_data["waiting_edit_price_for"] = name
-    query.edit_message_text(f"✏️ أرسل السعر الجديد بالدولار للخدمة:\n{name}\nمثال: 3.75\n\nأرسل 'الغاء' للإلغاء.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data=f"prq_pick_{idx}")]]))
-    return
-
-if data.startswith("prq_edit_qty_"):
-    idx = int(data.split("_")[-1])
-    lst = context.user_data.get("__prq_list__", [])
-    if idx < 0 or idx >= len(lst):
-        query.answer("غير موجود.", show_alert=True); return
-    name, _ = lst[idx]
-    context.user_data["waiting_edit_qty_for"] = name
-    query.edit_message_text(f"✏️ أرسل الكمية الجديدة (quantity_multiplier) للخدمة:\n{name}\nمثال: 5000\n\nأرسل 'الغاء' للإلغاء.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data=f"prq_pick_{idx}")]]))
-    return
-
-if data.startswith("prq_del_price_"):
-    idx = int(data.split("_")[-1])
-    lst = context.user_data.get("__prq_list__", [])
-    if idx < 0 or idx >= len(lst):
-        query.answer("غير موجود.", show_alert=True); return
-    name, _ = lst[idx]
-    db_delete_price_override(name)
-    query.answer("تم حذف السعر المخصص.")
-    # إعادة عرض العنصر
-    cat = context.user_data.get("__prq_cat__","smm")
-    query.edit_message_text("تم حذف السعر المخصص. اختر العملية:", reply_markup=_prq_item_kb(cat, idx))
-    return
-kb = []; names = []; display = ["🛠️ اختر مجموعة لتعديل كود الـAPI لها (أرسل رقمًا واحدًا فقط):\n"]
+        # ======= محرر أكواد الخدمات (API) =======
+        if data == "admin_service_codes":
+            pairs = build_service_groups()
+            if not pairs:
+                query.edit_message_text("لا توجد خدمات معرّفة حالياً.")
+                return
+            kb = []; names = []; display = ["🛠️ اختر مجموعة لتعديل كود الـAPI لها (أرسل رقمًا واحدًا فقط):\n"]
             for idx, (gname, services) in enumerate(pairs):
                 names.append((gname, services))
                 display.append(f"{idx+1}) {gname} — {len(services)} خدمة")
@@ -2374,69 +2163,7 @@ def handle_messages(update: Update, context: CallbackContext):
 
     full_name = update.effective_user.full_name
     username = update.effective_user.username or "NoUsername"
-    text = update.message.text
-    # ======== تعديل السعر/الكمية (المالك) ========
-    if user_id == ADMIN_ID and context.user_data.get("waiting_edit_price_for"):
-        name = context.user_data.pop("waiting_edit_price_for", None)
-        if text.strip().lower() in ("الغاء", "إلغاء", "cancel"):
-            update.message.reply_text("تم الإلغاء.")
-            return
-        try:
-            price = float(text.strip().replace(",", "."))
-        except Exception:
-            update.message.reply_text("❌ صيغة السعر غير صحيحة. مثال صحيح: 3.75")
-            return
-        db_set_price_override(name, price)
-        update.message.reply_text(f"✅ تم تحديث سعر الخدمة:\n{name}\nالسعر الجديد: {price}$")
-        return
-
-    if user_id == ADMIN_ID and context.user_data.get("waiting_edit_qty_for"):
-        name = context.user_data.pop("waiting_edit_qty_for", None)
-        if text.strip().lower() in ("الغاء", "إلغاء", "cancel"):
-            update.message.reply_text("تم الإلغاء.")
-            return
-        try:
-            q = int(float(text.strip()))
-            if q <= 0:
-                raise ValueError()
-        except Exception:
-            update.message.reply_text("❌ صيغة الكمية غير صحيحة. مثال صحيح: 5000")
-            return
-        db_update_quantity_only(name, q)
-        update.message.reply_text(f"✅ تم تحديث كمية الخدمة (quantity_multiplier):\n{name}\nالكمية الجديدة: {q}")
-        return
-
-# __INSERT_TEXT_BLOCK__
-if user_id == ADMIN_ID and context.user_data.get("waiting_edit_price_for"):
-    name = context.user_data.pop("waiting_edit_price_for", None)
-    if text.strip().lower() in ("الغاء", "إلغاء", "cancel"):
-        update.message.reply_text("تم الإلغاء.")
-        return
-    try:
-        price = float(text.strip().replace(",", "."))
-    except Exception:
-        update.message.reply_text("❌ صيغة السعر غير صحيحة. مثال صحيح: 3.75")
-        return
-    db_set_price_override(name, price)
-    update.message.reply_text(f"✅ تم تحديث سعر الخدمة:\n{name}\nالسعر الجديد: {price}$")
-    return
-
-if user_id == ADMIN_ID and context.user_data.get("waiting_edit_qty_for"):
-    name = context.user_data.pop("waiting_edit_qty_for", None)
-    if text.strip().lower() in ("الغاء", "إلغاء", "cancel"):
-        update.message.reply_text("تم الإلغاء.")
-        return
-    try:
-        q = int(float(text.strip()))
-        if q <= 0:
-            raise ValueError()
-    except Exception:
-        update.message.reply_text("❌ صيغة الكمية غير صحيحة. مثال صحيح: 5000")
-        return
-    db_update_quantity_only(name, q)
-    update.message.reply_text(f"✅ تم تحديث كمية الخدمة (quantity_multiplier):\n{name}\nالكمية الجديدة: {q}")
-    return
- or ""
+    text = update.message.text or ""
 
     # --- أوضاع المالك ---
     if user_id == ADMIN_ID and context.user_data.get("waiting_for_add_balance_user_id"):
@@ -2600,99 +2327,262 @@ if user_id == ADMIN_ID and context.user_data.get("waiting_edit_qty_for"):
         update.message.reply_text("تم حذف المشرف بنجاح." if ok else "لم يتم العثور على المشرف المحدد.")
         return
 
-    
+    # ======== شحن آسياسيل (المستخدم) + حماية ========
+    if context.user_data.get("waiting_for_card"):
+        raw = text.strip()
+        digits = "".join(ch for ch in raw if ch.isdigit())
+        if len(digits) not in (14, 16):
+            update.message.reply_text("❌ رقم الكارت غير صحيح. الرجاء إرسال رقم مكوّن من 14 أو 16 رقم.")
+            return
+        violation_reason = _record_and_check_card(user_id, digits)
+        if violation_reason:
+            _ban_user_for_hours(user_id, CARD_BAN_HOURS, violation_reason)
+            update.message.reply_text(f"🚫 تم حظرك مؤقتًا لمدة {CARD_BAN_HOURS} ساعة.\nالسبب: {violation_reason}")
+            clear_all_waiting_flags(context); return
+        # خزّن الكارت
+        db_add_card(user_id, full_name, username, digits)
+        # إشعار المالك
+        card_number_display = f"{digits[:4]}-{digits[4:8]}-{digits[8:12]}-{digits[12:]}" if len(digits)==16 else digits
+        try:
+            context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=("💳 تم استلام كارت آسياسيل جديد للمراجعة:\n"
+                      f"- المستخدم: {full_name} (@{username})\n"
+                      f"- ID: {user_id}\n"
+                      f"- الكارت: {card_number_display}\n\n"
+                      "اضغط الزر أدناه لعرض جميع الكروت المعلقة."),
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("الكارتات المعلقة", callback_data="pending_cards")]])
+            )
+        except Exception as e:
+            logger.error("Failed to notify owner about new card: %s", e)
+        update.message.reply_text("✅ تم إرسال رقم الكارت للمراجعة.\nسيقوم المالك بالتحقق والشحن إن أمكن.", reply_markup=main_menu_keyboard(user_id))
+        clear_all_waiting_flags(context); return
+
+    # ======== إدخال مبلغ الشحن عند موافقة المالك ========
+    if user_id == ADMIN_ID and context.user_data.get("waiting_for_amount"):
+        try:
+            amount = float(text.strip())
+        except ValueError:
+            update.message.reply_text("الرجاء إرسال مبلغ صالح."); return
+        cid = context.user_data.get("card_to_approve_id")
+        card = db_get_card(cid) if cid else None
+        if not card:
+            update.message.reply_text("تعذر العثور على الكارت المحدد."); clear_all_waiting_flags(context); return
+        target_id = card[1]
+        _exec("UPDATE users SET balance = COALESCE(balance,0) + %s WHERE user_id=%s", (amount, target_id))
+        sync_balance_from_db(target_id)
+        db_approve_card(cid, amount)
+        try:
+            context.bot.send_message(chat_id=target_id, text=f"🎉 تم شحن رصيدك بقيمة {amount}$.")
+        except Exception as e:
+            logger.error("Failed to notify user about topup: %s", e)
+        # إحالة: أول شحن عبر آسياسيل
+        try:
+            inviter_id = db_mark_first_funding_and_pay(target_id)
+            if inviter_id:
+                try: context.bot.send_message(chat_id=inviter_id, text=f"🎉 مبروك! حصلت على عمولة إحالة {REFERRAL_COMMISSION_USD}$ لأن صديقك شحن لأول مرة عبر آسياسيل.")
+                except Exception: pass
+                try: context.bot.send_message(chat_id=ADMIN_ID, text=f"📢 دُفعت عمولة إحالة {REFERRAL_COMMISSION_USD}$ للمُحيل {inviter_id} بعد أول شحن (آسياسيل) للمحال {target_id}.")
+                except Exception: pass
+        except Exception as _e:
+            logger.error("referral payout on Asiacell failed: %s", _e)
+        update.message.reply_text(f"تم شحن رصيد المستخدم {card[2]} (@{card[3]}) بمبلغ {amount}$.")
+        clear_all_waiting_flags(context); return
+
+    # --- طلبات الخدمات (خصم رصيد + تسجيل صرف) ---
+    if context.user_data.get("selected_service"):
+        service_name = context.user_data.get("selected_service")
+        price = float(context.user_data.get("service_price", 0))
+        link = text.strip()
+        bal = users_balance.get(user_id, 0.0)
+        if bal < price:
+            update.message.reply_text("رصيدك لم يعد كافياً. حاول الشحن أولاً.")
+            clear_all_waiting_flags(context); return
+        users_balance[user_id] = round(bal - price, 2)
+        sync_balance_to_db(user_id)
+        add_user_spent(user_id, price)
+        # خزّن الطلب
+        order_id = db_add_order(user_id, full_name, username, "smm", service_name, price, link, None)
+        try:
+            context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=(f"🆕 طلب خدمة جديد بانتظار المراجعة:\n"
+                      f"- المستخدم: {full_name} (@{username}) | ID: {user_id}\n"
+                      f"- الخدمة: {service_name} | السعر: {price}$\n"
+                      f"- الرابط: {link}\n- رقم الطلب: #{order_id}"),
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("الطلبات المعلّقة (الخدمات)", callback_data="pending_smm_orders")]])
+            )
+        except Exception:
+            pass
+        update.message.reply_text("✅ تم استلام طلبك ووضعه في قائمة المراجعة.\nسيتم التنفيذ قريباً.", reply_markup=main_menu_keyboard(user_id))
+        clear_all_waiting_flags(context); return
+
+    if context.user_data.get("selected_pubg_service"):
+        service_name = context.user_data.get("selected_pubg_service")
+        price = float(context.user_data.get("pubg_service_price", 0))
+        pubg_id = text.strip()
+        bal = users_balance.get(user_id, 0.0)
+        if bal < price:
+            update.message.reply_text("رصيدك لم يعد كافياً. حاول الشحن أولاً.")
+            clear_all_waiting_flags(context); return
+        users_balance[user_id] = round(bal - price, 2)
+        sync_balance_to_db(user_id)
+        add_user_spent(user_id, price)
+        order_id = db_add_order(user_id, full_name, username, "pubg", service_name, price, None, {"pubg_id": pubg_id})
+        try:
+            context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=(f"🆕 طلب شدّات ببجي:\n" f"- المستخدم: {full_name} (@{username}) | ID: {user_id}\n" f"- الخدمة: {service_name} | السعر: {price}$\n" f"- آيدي ببجي: {pubg_id}\n- رقم الطلب: #{order_id}"),
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("طلبات شدات ببجي", callback_data="pending_pubg_orders")]])
+            )
+        except Exception:
+            pass
+
+        update.message.reply_text("✅ تم استلام طلب شحن شدات ببجي. سنقوم بالتنفيذ قريباً.", reply_markup=main_menu_keyboard(user_id))
+        clear_all_waiting_flags(context); return
+
+    if context.user_data.get("waiting_for_itunes_confirm"):
+        if text.strip() == "1":
+            service_name = context.user_data.get("selected_itunes_service")
+            price = float(context.user_data.get("itunes_service_price", 0))
+            bal = users_balance.get(user_id, 0.0)
+            if bal < price:
+                update.message.reply_text("رصيدك غير كافٍ حالياً. قم بالشحن أولاً.")
+                clear_all_waiting_flags(context); return
+            users_balance[user_id] = round(bal - price, 2)
+            sync_balance_to_db(user_id)
+            add_user_spent(user_id, price)
+            order_id = db_add_order(user_id, full_name, username, "itunes", service_name, price, None, {})
+            try:
+                context.bot.send_message(
+                    chat_id=ADMIN_ID,
+                    text=(f"🆕 طلب شحن آيتونز:\n" f"- المستخدم: {full_name} (@{username}) | ID: {user_id}\n" f"- الخدمة: {service_name} | السعر: {price}$\n- رقم الطلب: #{order_id}"),
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("طلبات شحن الايتونز", callback_data="pending_itunes_orders")]])
+                )
+            except Exception:
+                pass
+
+            update.message.reply_text("✅ تم استلام طلب ايتونز. سيتم إرسال الكود لك قريباً.", reply_markup=main_menu_keyboard(user_id))
+        else:
+            update.message.reply_text("تم إلغاء العملية.")
+        clear_all_waiting_flags(context); return
+
+    if user_id == ADMIN_ID and context.user_data.get("waiting_for_itunes_code"):
+        oid = context.user_data.get("itunes_to_complete_id")
+        code = text.strip()
+        row = _exec("SELECT user_id FROM orders WHERE id=%s AND category='itunes'", (oid,), "one")
+        if row:
+            try:
+                context.bot.send_message(chat_id=row[0], text=f"🎁 كود ايتونز الخاص بك:\n{code}")
+            except Exception as e:
+                logger.error("Failed to send iTunes code: %s", e)
+            _exec("UPDATE orders SET status='completed', completed_at=NOW(), payload = COALESCE(payload,'{}'::jsonb) || %s::jsonb WHERE id=%s",
+                  (psycopg.types.json.Json({"code": code}), oid))
+            update.message.reply_text("تم إرسال الكود للمستخدم.")
+        else:
+            update.message.reply_text("طلب غير صالح.")
+        clear_all_waiting_flags(context); return
 
 
+    # استقبال آيدي لودو بعد اختيار الخدمة
+    if context.user_data.get("selected_ludo_service"):
+        service_name = context.user_data.get("selected_ludo_service")
+        price = float(context.user_data.get("ludo_service_price", 0))
+        ludo_id = text.strip()
+        if not ludo_id.isdigit():
+            update.message.reply_text("أرسل آيدي لودو أرقام فقط، بدون مسافات.")
+            return
+        bal = users_balance.get(user_id, 0.0)
+        if bal < price:
+            update.message.reply_text("رصيدك غير كافٍ حالياً.")
+            clear_all_waiting_flags(context); return
+        users_balance[user_id] = round(bal - price, 2)
+        sync_balance_to_db(user_id)
+        add_user_spent(user_id, price)
+        db_add_order(user_id, full_name, username, "ludo", service_name, price, None, {"ludo_id": ludo_id})
+        try:
+            context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=(f"🆕 طلب لودو:\n- المستخدم: {full_name} (@{username}) | ID: {user_id}\n"
+                      f"- الخدمة: {service_name} | السعر: {price}$\n- آيدي لودو: {ludo_id}"),
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("طلبات لودو المعلّقة", callback_data="pending_ludo_orders")]])
+            )
+        except Exception:
+            pass
+        update.message.reply_text("✅ تم استلام طلب لودو. سنباشر التنفيذ قريباً.", reply_markup=main_menu_keyboard(user_id))
+        clear_all_waiting_flags(context); return
+    if context.user_data.get("waiting_for_telegram_link"):
+        service_name = context.user_data.get("selected_telegram_service")
+        price = float(context.user_data.get("telegram_service_price", 0))
+        invite_link = text.strip()
+        if "t.me/" not in invite_link:
+            update.message.reply_text("الرجاء إرسال رابط دعوة صحيح مثل: https://t.me/+xxxxx"); return
+        bal = users_balance.get(user_id, 0.0)
+        if bal < price:
+            update.message.reply_text("رصيدك غير كافٍ حالياً.")
+            clear_all_waiting_flags(context); return
+        users_balance[user_id] = round(bal - price, 2)
+        sync_balance_to_db(user_id)
+        add_user_spent(user_id, price)
+        db_add_order(user_id, full_name, username, "smm", service_name, price, invite_link, {"type":"telegram"})
+        try:
+            context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=(f"🆕 طلب خدمة تلغرام:\n- المستخدم: {full_name} (@{username}) | ID: {user_id}\n"
+                      f"- الخدمة: {service_name} | السعر: {price}$\n- الرابط: {invite_link}"),
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("الطلبات المعلّقة (الخدمات)", callback_data="pending_smm_orders")]])
+            )
+        except Exception:
+            pass
+        update.message.reply_text("✅ تم استلام طلب خدمة التليجرام. سنباشر التنفيذ قريباً.", reply_markup=main_menu_keyboard(user_id))
+        clear_all_waiting_flags(context); return
 
-def get_effective_price(user_id: int, service_name: str, base_price: float, kind: str = "generic") -> float:
-    """يحسب السعر المعروض للمستخدم:
-    - يأخذ سعر override إن تم تعيينه من لوحة المالك
-    - ثم يطبق خصم 10% للمشرفين (إن كان المستخدم مشرفًا)
-    """
+    update.message.reply_text("اختر من القائمة:", reply_markup=main_menu_keyboard(user_id))
+
+# =========================
+# أوامر بسيطة
+# =========================
+def help_cmd(update: Update, context: CallbackContext):
+    update.message.reply_text("أرسل /start لفتح القوائم.")
+
+# =========================
+# تشغيل البوت
+# =========================
+def main():
+    # تأكد من اتصال الـ DB
     try:
-        override = db_get_price_override(service_name)
-        bp = float(override if override is not None else base_price)
+        with pg_pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+                cur.fetchone()
+        logger.info("✅ تم الاتصال بقاعدة البيانات بنجاح.")
+    except Exception as e:
+        logger.exception("❌ فشل الاتصال بقاعدة البيانات: %s", e)
+        raise
+
+    updater = Updater(TOKEN, use_context=True)
+    dp = updater.dispatcher
+
+    dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(CommandHandler("help", help_cmd))
+    dp.add_handler(CallbackQueryHandler(button_handler))
+    dp.add_handler(MessageHandler((Filters.text | Filters.photo | Filters.video | Filters.voice) & ~Filters.command, handle_messages))
+
+    updater.start_polling()
+    updater.idle()
+
+if __name__ == "__main__":
+    main()
+
+
+# =========================
+# خصومات المشرفين (جديد – خصم ثابت 10% للمشرفين فقط)
+# =========================
+def get_effective_price(user_id: int, service_name: str, base_price: float, kind: str = "generic") -> float:
+    try:
         if is_moderator(user_id):
-            return round(bp * 0.90, 2)
-        return round(bp, 2)
+            return round(float(base_price) * 0.90, 2)
+        return float(base_price)
     except Exception as e:
         logger.error("get_effective_price error: %s", e)
-        try:
-            return round(float(base_price), 2)
-        except Exception:
-            return base_price
-
-
-
-
-# ======== Helpers: إدارة الأسعار والكميات ========
-def _prq_get_catalog(cat: str):
-    if cat == "smm":
-        return services_dict
-    if cat == "pubg":
-        return pubg_services
-    if cat == "itunes":
-        return itunes_services
-    if cat == "telegram":
-        return telegram_services
-    if cat == "ludo":
-        return ludo_services
-    return services_dict
-
-def _prq_list_services(cat: str):
-    d = _prq_get_catalog(cat)
-    # ثابت الترتيب
-    return [(k, d[k]) for k in sorted(d.keys())]
-
-
-def _prq_render_page(context: CallbackContext, offset: int = 0):
-    cat = context.user_data.get("__prq_cat__") or "smm"
-    lst = context.user_data.get("__prq_list__", [])
-    page_size = 8
-    total = len(lst)
-    start = max(0, offset)
-    end = min(total, start + page_size)
-    context.user_data["__prq_offset__"] = start
-    lines = [f"القسم: {cat} — عدد الخدمات: {total}", "اختر خدمة للتعديل:"]
-    for i in range(start, end):
-        name, base_price = lst[i]
-        ov = db_get_price_override(name)
-        p = ov if ov is not None else base_price
-        lines.append(f"{i+1}) {name} — السعر الحالي: {p}$")
-    # Keyboard with item buttons + nav
-    kb = []
-    for i in range(start, end):
-        kb.append([InlineKeyboardButton(f"{i+1}) {lst[i][0]}", callback_data=f"prq_pick_{i}")])
-    # nav row
-    prev_off = max(0, start - page_size)
-    next_off = end if end < total else start
-    nav_row = []
-    nav_row.append(InlineKeyboardButton("⬅️ السابق", callback_data=f"prq_page_{prev_off}"))
-    nav_row.append(InlineKeyboardButton("التالي ➡️", callback_data=f"prq_page_{next_off}"))
-    kb.append(nav_row)
-    kb.append([InlineKeyboardButton("رجوع", callback_data="admin_price_qty")])
-    return "\n".join(lines), InlineKeyboardMarkup(kb)
-
-
-
-def _prq_render_item(cat: str, name: str, base_price: float) -> str:
-    ov = db_get_price_override(name)
-    p = ov if ov is not None else base_price
-    q_text = ""
-    if cat == "smm":
-        eff = db_get_service_override(name) or {}
-        qm = eff.get("quantity_multiplier")
-        if qm is None:
-            qm = (service_api_mapping.get(name) or {}).get("quantity_multiplier")
-        if qm:
-            q_text = f"\nالكمية الحالية (quantity_multiplier): {qm}"
-    return f"الخدمة: {name}\nالسعر الحالي: {p}${q_text}"
-
-def _prq_item_kb(cat: str, idx: int):
-    kb = [[InlineKeyboardButton("✏️ تعديل السعر", callback_data=f"prq_edit_price_{idx}")]]
-    if cat == "smm":
-        kb.append([InlineKeyboardButton("✏️ تعديل الكمية", callback_data=f"prq_edit_qty_{idx}")])
-    kb.append([InlineKeyboardButton("🗑 حذف السعر المخصص", callback_data=f"prq_del_price_{idx}")])
-    kb.append([InlineKeyboardButton("رجوع", callback_data=f"prq_page_{ ( ( (idx//8)*8 ) ) }")])
-    return InlineKeyboardMarkup(kb)
-
+        return float(base_price)
