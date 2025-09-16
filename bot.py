@@ -2746,11 +2746,44 @@ def on_admin_send_broadcast(update, context):
         f"• المستخدمين: {len(users)} | المجموعات: {len(groups)} | القنوات (مشرف): {len(channels)}"
     )
 
+
+
+# === Manual registration command (bootstraps existing groups/channels) ===
+def register_here(update, context):
+    """Run /register_here inside any group/supergroup/channel to add it to DB immediately.
+    In channels: make sure the bot is admin so it can see and post.
+    """
+    chat = update.effective_chat
+    if not chat:
+        return
+    try:
+        # Detect if bot is admin (esp. for channels)
+        try:
+            me = context.bot.get_chat_member(chat.id, context.bot.id)
+            is_admin = getattr(me, "status", "") in ("administrator", "creator")
+        except Exception:
+            is_admin = False
+
+        _ensure_chats_table()
+        _upsert_chat(chat.id, chat.type, getattr(chat, "title", "") or "", is_admin=is_admin)
+
+        msg = "تم تسجيل هذه الدردشة للإعلانات."
+        if chat.type == "channel":
+            if is_admin:
+                msg += " (البوت مشرف ✅)"
+            else:
+                msg += " (⚠️ اجعل البوت مشرفًا لكي يتمكن من الإرسال)"
+        update.effective_message.reply_text(msg)
+    except Exception as e:
+        update.effective_message.reply_text(f"تعذر التسجيل: {e}")
+
+
 def register_broadcast_feature(dispatcher):
     _ensure_chats_table()
     dispatcher.add_handler(ChatMemberHandler(on_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
     dispatcher.add_handler(MessageHandler(Filters.all, track_any_chat), group=1)
     dispatcher.add_handler(CallbackQueryHandler(on_admin_announce_btn, pattern=r'^admin_announce$'))
     dispatcher.add_handler(CommandHandler("send_to_all", on_admin_announce_cmd))
+    dispatcher.add_handler(CommandHandler("register_here", register_here))
     dispatcher.add_handler(MessageHandler(Filters.user(user_id=ADMIN_ID) & Filters.all, on_admin_send_broadcast), group=0)
 # ==================== [/Broadcast Feature] ====================
