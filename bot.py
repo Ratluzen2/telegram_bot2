@@ -1126,6 +1126,35 @@ def button_handler(update: Update, context: CallbackContext):
     user_id = query.from_user.id
     data = query.data
 
+    # === Edit Prices/Quantities ===
+    if data == "edit_prices_qty":
+        if _is_owner_or_admin(user_id):
+            services = _all_service_names_sorted()
+            kb, p, pages = _render_epq_page(services, 1)
+            context.user_data["__epq_list__"] = services
+            try: query.answer()
+            except Exception: pass
+            try:
+                query.edit_message_text(f"تعديل الأسعار والكميات (صفحة {p}/{pages}):", reply_markup=kb)
+            except Exception:
+                try:
+                    update.effective_message.reply_text(f"تعديل الأسعار والكميات (صفحة {p}/{pages}):", reply_markup=kb)
+                except Exception: pass
+        else:
+            try: query.answer("هذه الميزة للمالك فقط.", show_alert=True)
+            except Exception: pass
+        return
+
+    # ensure callback answered to avoid spinner & add debug log
+    try:
+        query.answer()
+    except Exception:
+        pass
+    try:
+        logger.info('[CB] data=%s from=%s', data, user_id)
+    except Exception:
+        pass
+
     # Unified announce entry
     if data == "admin_announce_unified":
         if _is_owner_or_admin(user_id):
