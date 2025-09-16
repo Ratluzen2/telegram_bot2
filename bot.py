@@ -1136,6 +1136,13 @@ def button_handler(update: Update, context: CallbackContext):
     data = query.data
 
 
+    # --- Route to Price/Qty plugin if callback matches our namespace ---
+    try:
+        if data == 'admin_edit_prices' or data.startswith('ap_'):
+            price_qty_router(update, context)
+            return
+    except Exception:
+        pass
     # شرح الخصومات للمشرفين
     if data == "mod_discount_info" and is_moderator(user_id):
         try:
