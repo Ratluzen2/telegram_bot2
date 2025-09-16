@@ -900,13 +900,6 @@ def _ap_show_service_actions(update: Update, context: CallbackContext, query, id
     query.edit_message_text(f"الخدمة:\n• {name}\nاختر الإجراء:", reply_markup=InlineKeyboardMarkup(btns))
 
 
-except Exception as e:
-        try:
-            query.answer('حدث خطأ مفاجئ. حاول مجدداً.', show_alert=True)
-        except Exception:
-            pass
-        import logging as _lg
-        _lg.exception('button_handler error: %s', e)
 
 
 # ======= خدمات شراء رصيد الهاتف (قسم جديد) =======
@@ -1332,11 +1325,9 @@ def get_mod_discount_help_text() -> str:
 def button_handler(update: Update, context: CallbackContext):
     query = update.callback_query
     try:
-        # ردّ سريع لتجنّب دوران زر التحميل عند الضغط
-        try:
-            query.answer()
-        except Exception:
-            pass
+        query.answer()
+    except Exception:
+        pass
     query = update.callback_query
     user_id = query.from_user.id
     data = query.data
@@ -2485,6 +2476,7 @@ def button_handler(update: Update, context: CallbackContext):
 # =========================
 # استقبال الرسائل (Message)
 # =========================
+
 def handle_messages(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     ban_msg = _is_user_blocked_now(user_id)
