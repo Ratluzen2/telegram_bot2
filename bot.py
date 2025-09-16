@@ -1,25 +1,3 @@
-
-
-# --- helper: owner/admin detection (non-invasive) ---
-def _is_owner_or_admin(user_id: int) -> bool:
-    try:
-        if user_id == ADMIN_ID:
-            return True
-    except Exception:
-        pass
-    try:
-        if 'is_admin' in globals():
-            return bool(is_admin(user_id))
-    except Exception:
-        pass
-    try:
-        rows = _exec("SELECT 1 FROM admins WHERE user_id=%s LIMIT 1", (user_id,), "all")
-        if rows:
-            return True
-    except Exception:
-        pass
-    return False
-
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
@@ -55,9 +33,9 @@ from telegram.ext import (
     CallbackQueryHandler,
     Filters,
     CallbackContext
-)
-
-# =========================
+,
+    ChatMemberHandler
+)# =========================
 # إعدادات السجل (logging)
 # =========================
 logging.basicConfig(
@@ -755,14 +733,14 @@ def admin_menu_keyboard():
         [InlineKeyboardButton("عدد المستخدمين", callback_data="admin_users_count"), InlineKeyboardButton("رصيد المستخدمين", callback_data="admin_users_balance")],
         [InlineKeyboardButton("إدارة المشرفين", callback_data="manage_mods")],
         [InlineKeyboardButton("حضر المستخدم", callback_data="block_user"), InlineKeyboardButton("الغاء حظر المستخدم", callback_data="unblock_user")],
-        [InlineKeyboardButton("الاعلان", callback_data="admin_announce_unified")],
-        [InlineKeyboardButton("تعديل الأسعار والكميات", callback_data="edit_prices_qty")],
+        [InlineKeyboardButton("اعلان البوت", callback_data="admin_announce")],
         [InlineKeyboardButton("أكواد خدمات API", callback_data="admin_service_codes")],
-        [InlineKeyboardButton("نظام الإحالة", callback_data="admin_referrals")],
-        [InlineKeyboardButton("شرح الخصومات", callback_data="admin_discounts_info")],
-        [InlineKeyboardButton("المتصدرين🎉", callback_data="show_leaderboard")]
+        [InlineKeyboardButton("نظام الإحالة", callback_data="admin_referrals")]
     ]
+    buttons.append([InlineKeyboardButton("شرح الخصومات", callback_data="admin_discounts_info")])
+    buttons.append([InlineKeyboardButton("المتصدرين🎉", callback_data="show_leaderboard")])
     return InlineKeyboardMarkup(buttons)
+
 def services_menu_keyboard():
     buttons = [
         [InlineKeyboardButton("قسم المتابعين", callback_data="show_followers")],
@@ -1125,62 +1103,6 @@ def button_handler(update: Update, context: CallbackContext):
     query = update.callback_query
     user_id = query.from_user.id
     data = query.data
-
-    # === Edit Prices/Quantities ===
-    if data == "edit_prices_qty":
-        if _is_owner_or_admin(user_id):
-            services = _all_service_names_sorted()
-            kb, p, pages = _render_epq_page(services, 1)
-            context.user_data["__epq_list__"] = services
-            try: query.answer()
-            except Exception: pass
-            try:
-                query.edit_message_text(f"تعديل الأسعار والكميات (صفحة {p}/{pages}):", reply_markup=kb)
-            except Exception:
-                try:
-                    update.effective_message.reply_text(f"تعديل الأسعار والكميات (صفحة {p}/{pages}):", reply_markup=kb)
-                except Exception: pass
-        else:
-            try: query.answer("هذه الميزة للمالك فقط.", show_alert=True)
-            except Exception: pass
-        return
-
-    # ensure callback answered to avoid spinner & add debug log
-    try:
-        query.answer()
-    except Exception:
-        pass
-    try:
-        logger.info('[CB] data=%s from=%s', data, user_id)
-    except Exception:
-        pass
-
-    # Unified announce entry
-    if data == "admin_announce_unified":
-        if _is_owner_or_admin(user_id):
-            kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("إعلان للخاص", callback_data="ann_choose_users"),
-                 InlineKeyboardButton("إعلان للقنوات/الكروبات", callback_data="ann_choose_chats")],
-                [InlineKeyboardButton("إعلان للكل", callback_data="ann_choose_all")],
-                [InlineKeyboardButton("رجوع", callback_data="admin_menu")]
-            ])
-            query.answer()
-            _safe_edit(update, query, "اختر نوع البث للإعلان:", reply_markup=kb)
-        else:
-            query.answer("هذه الميزة للمالك فقط.", show_alert=True)
-        return
-
-    if data in ("ann_choose_users", "ann_choose_chats", "ann_choose_all"):
-        if _is_owner_or_admin(user_id):
-            scope = {"ann_choose_users":"users","ann_choose_chats":"chats","ann_choose_all":"all"}[data]
-            context.user_data["waiting_for_broadcast_unified"] = True
-            context.user_data["broadcast_scope"] = scope
-            query.answer()
-            _safe_edit(update, query, f"أرسل الآن نص/صورة/فيديو/صوت وسيتم بثّه إلى: { 'الخاص' if scope=='users' else ('القنوات/الكروبات' if scope=='chats' else 'الكل') }")
-        else:
-            query.answer("هذه الميزة للمالك فقط.", show_alert=True)
-        return
-
 
 
     # شرح الخصومات للمشرفين
@@ -2640,6 +2562,11 @@ def main():
 
     updater = Updater(TOKEN, use_context=True)
     dp = updater.dispatcher
+    # تسجيل خاصية البث للجميع
+    try:
+        register_broadcast_feature(dp)
+    except Exception as _e:
+        logging.warning('Broadcast not registered: %s', _e)
 
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(CommandHandler("help", help_cmd))
@@ -2666,423 +2593,164 @@ def get_effective_price(user_id: int, service_name: str, base_price: float, kind
         return float(base_price)
 
 
-# ==== BEGIN ADDONS (auto-appended) ====
 
-# =========================
-# [ADDON] جداول جديدة: أسعار الخدمات + محادثات القنوات/الكروبات
-# =========================
+# ==================== [Broadcast Feature: Groups + Channels + Users] ====================
+# ينشئ/يحدّث جدول chats ويضيف زر "📣 إرسال إعلان للجميع" للمالك فقط
+# يرسل الإعلان لكل المستخدمين + المجموعات/السوبرجروبات + القنوات التي البوت فيها "مشرف"
 try:
-    _exec("""CREATE TABLE IF NOT EXISTS service_prices (
-        service_name TEXT PRIMARY KEY,
-        price REAL NOT NULL
-    )""")
-    _exec("""CREATE TABLE IF NOT EXISTS chats (
-        chat_id BIGINT PRIMARY KEY,
-        type TEXT,
-        title TEXT,
-        joined_at TIMESTAMPTZ DEFAULT NOW(),
-        last_seen TIMESTAMPTZ DEFAULT NOW()
-    )""")
-except Exception as e:
-    logger.error("failed to init addon tables: %s", e)
+    _exec  # تستخدم نفس دالة قاعدة البيانات الموجودة لديك
+except NameError:
+    raise RuntimeError("لم يتم العثور على الدالة _exec الخاصة بقاعدة البيانات. هذه الإضافة تعتمد عليها.")
 
-def db_get_price_override(service_name: str):
-    row = _exec("SELECT price FROM service_prices WHERE service_name=%s", (service_name,), "one")
-    return None if not row else float(row[0])
-
-def db_set_price_override(service_name: str, price: float):
-    _exec("""INSERT INTO service_prices (service_name, price)
-             VALUES (%s,%s)
-             ON CONFLICT(service_name) DO UPDATE SET price=EXCLUDED.price""", (service_name, float(price)))
-
-def db_list_chats(kinds=("group","supergroup","channel")):
-    placeholders = ",".join(["%s"]*len(kinds))
-    return _exec(f"SELECT chat_id, type, COALESCE(title,'') FROM chats WHERE type IN ({placeholders}) ORDER BY joined_at DESC", tuple(kinds), "all") or []
-
-def _record_chat(chat):
+def _ensure_chats_table():
     try:
-        ch_id = int(chat.id)
-        ch_type = str(chat.type)
-        title = getattr(chat, "title", None)
-        _exec("""INSERT INTO chats (chat_id, type, title, joined_at, last_seen)
-                 VALUES (%s,%s,%s,NOW(),NOW())
-                 ON CONFLICT(chat_id) DO UPDATE SET type=EXCLUDED.type, title=EXCLUDED.title, last_seen=NOW()""",
-              (ch_id, ch_type, title))
+        _exec("""
+        CREATE TABLE IF NOT EXISTS chats (
+            chat_id    BIGINT PRIMARY KEY,
+            chat_type  TEXT,
+            title      TEXT,
+            is_admin   BOOLEAN DEFAULT FALSE,
+            joined_at  TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+        """)
     except Exception as e:
-        logger.debug("record chat failed: %s", e)
+        logging.exception("Failed to create chats table: %s", e)
+        raise
 
-# استدعها مبكراً في أي message/update
-def _hook_record_chat_from_update(update: Update):
+def _upsert_chat(chat_id: int, chat_type: str, title: str, is_admin=None):
+    if title is None: title = ""
+    _exec(
+        """
+        INSERT INTO chats (chat_id, chat_type, title, is_admin, updated_at)
+        VALUES (%s, %s, %s, COALESCE(%s, FALSE), NOW())
+        ON CONFLICT (chat_id) DO UPDATE SET
+            chat_type  = EXCLUDED.chat_type,
+            title      = EXCLUDED.title,
+            is_admin   = COALESCE(EXCLUDED.is_admin, chats.is_admin),
+            updated_at = NOW()
+        """,
+        (chat_id, chat_type, title, is_admin),
+    )
+
+def _set_chat_admin_status(chat_id: int, is_admin: bool):
+    _exec("UPDATE chats SET is_admin=%s, updated_at=NOW() WHERE chat_id=%s", (is_admin, chat_id))
+
+def track_any_chat(update, context):
+    chat = update.effective_chat
+    if not chat: return
+    if chat.type in ("group", "supergroup", "channel"):
+        _upsert_chat(chat.id, chat.type, getattr(chat, "title", "") or "")
+
+def on_my_chat_member(update, context):
+    my = update.my_chat_member
+    if not my: return
+    bot_id = context.bot.id
+    if my.new_chat_member and my.new_chat_member.user and my.new_chat_member.user.id == bot_id:
+        chat = my.chat
+        status = my.new_chat_member.status
+        is_admin = status in ("administrator", "creator")
+        if chat.type in ("group", "supergroup", "channel"):
+            _upsert_chat(chat.id, chat.type, getattr(chat, "title", "") or "", is_admin=is_admin)
+            logging.info("Bot status in %s (%s): %s | is_admin=%s", getattr(chat, "title", ""), chat.id, status, is_admin)
+
+def _db_get_all_user_ids():
+    rows = _exec("SELECT user_id FROM users", fetch="all") or []
+    return [int(r[0]) for r in rows]
+
+def _db_get_group_ids():
+    rows = _exec("SELECT chat_id FROM chats WHERE chat_type IN ('group','supergroup')", fetch="all") or []
+    return [int(r[0]) for r in rows]
+
+def _db_get_channel_ids():
+    rows = _exec("SELECT chat_id FROM chats WHERE chat_type='channel' AND is_admin=TRUE", fetch="all") or []
+    return [int(r[0]) for r in rows]
+
+def _unique(xs):
+    s=set(); out=[]
+    for i in xs:
+        if i not in s:
+            s.add(i); out.append(i)
+    return out
+
+def get_all_broadcast_targets():
+    users = _db_get_all_user_ids()
+    groups = _db_get_group_ids()
+    channels = _db_get_channel_ids()
+    return _unique([*users, *groups, *channels]), users, groups, channels
+
+def _copy_to(chat_id, update, context):
     try:
-        ch = update.effective_chat
-        if ch and ch.type in ("group","supergroup","channel"):
-            _record_chat(ch)
-    except Exception:
-        pass
-
-# =========================
-# [ADDON] سعر الخدمة الأساسي (أولوية DB ثم القواميس الحالية)
-# =========================
-def get_base_price(service_name: str) -> float:
-    # 1) DB override
-    try:
-        ov = db_get_price_override(service_name)
-    except Exception:
-        ov = None
-    if ov is not None:
-        return float(ov)
-
-    # 2) Known dicts
-    candidates = []
-    for name in [
-        'services_dict','itunes_services','pubg_services','telegram_services','ludo_services',
-        'mobile_topup_services','topup_services','recharge_services','phone_balance_services','telecom_services'
-    ]:
-        if name in globals() and isinstance(globals()[name], dict):
-            candidates.append(globals()[name])
-
-    # 2.a) Any other *_services dicts
-    for k,v in list(globals().items()):
-        if isinstance(v, dict) and k.endswith('_services') and v not in candidates:
-            candidates.append(v)
-
-    for d in candidates:
-        if service_name in d:
-            try:
-                return float(d[service_name])
-            except Exception:
-                continue
-
-    # 3) service_api_mapping may have a default_price field
-    try:
-        if 'service_api_mapping' in globals() and service_name in service_api_mapping:
-            m = service_api_mapping[service_name]
-            if isinstance(m, dict) and 'default_price' in m:
-                return float(m['default_price'])
-    except Exception:
-        pass
-
-    # fallback
-    return 0.0
-
-# =========================
-# [ADDON] إعادة تعريف بعض لوحات الخدمات لاستخدام get_base_price
-# =========================
-def itunes_services_keyboard(user_id: int):
-    buttons = []
-    for service_name in itunes_services.keys():
-        price = get_base_price(service_name)
-        eff = get_effective_price(user_id, service_name, price, "itunes")
-        buttons.append([InlineKeyboardButton(f"{service_name} - {eff}$", callback_data=f"itunes_service_{service_name}")])
-    buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
-    return InlineKeyboardMarkup(buttons)
-
-def telegram_services_keyboard(user_id: int):
-    buttons = []
-    for service_name in telegram_services.keys():
-        price = get_base_price(service_name)
-        eff = get_effective_price(user_id, service_name, price, "telegram")
-        buttons.append([InlineKeyboardButton(f"{service_name} - {eff}$", callback_data=f"telegram_service_{service_name}")])
-    buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
-    return InlineKeyboardMarkup(buttons)
-
-def ludo_services_keyboard(user_id: int):
-    buttons = []
-    for service_name in ludo_services.keys():
-        price = get_base_price(service_name)
-        eff = get_effective_price(user_id, service_name, price, "ludo")
-        buttons.append([InlineKeyboardButton(f"{service_name} - {eff}$", callback_data=f"ludo_service_{service_name}")])
-    buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
-    return InlineKeyboardMarkup(buttons)
-
-# =========================
-# [ADDON] قائمة كل الخدمات (لأداة التحرير)
-# =========================
-def _all_service_names_sorted():
-    names = set()
-    # Known dicts
-    for name in [
-        'services_dict','itunes_services','pubg_services','telegram_services','ludo_services',
-        'mobile_topup_services','topup_services','recharge_services','phone_balance_services','telecom_services'
-    ]:
-        if name in globals() and isinstance(globals()[name], dict):
-            names.update(list(globals()[name].keys()))
-    # Any *_services dicts dynamically
-    for k,v in list(globals().items()):
-        if isinstance(v, dict) and k.endswith('_services'):
-            names.update(list(v.keys()))
-    # service_api_mapping keys
-    if 'service_api_mapping' in globals() and isinstance(service_api_mapping, dict):
-        names.update(list(service_api_mapping.keys()))
-    try:
-        extra = _exec("SELECT service_name FROM service_prices", (), "all") or []
-        for (n,) in extra:
-            names.add(n)
-    except Exception:
-        pass
-    return sorted(names)
-
-# =========================
-# [ADDON] لوحة تحكم المالك (إعادة تعريف لإضافة أزرار جديدة)
-# =========================
-def admin_menu_keyboard():
-    buttons = [
-        [InlineKeyboardButton("الطلبات المعلّقة (الخدمات)", callback_data="pending_smm_orders")],
-        [InlineKeyboardButton("الكارتات المعلقة", callback_data="pending_cards")],
-        [InlineKeyboardButton("طلبات شدات ببجي", callback_data="pending_pubg_orders")],
-        [InlineKeyboardButton("طلبات شحن الايتونز", callback_data="pending_itunes_orders")],
-        [InlineKeyboardButton("طلبات لودو المعلقة", callback_data="pending_ludo_orders")],
-        [InlineKeyboardButton("إضافة الرصيد", callback_data="admin_add_balance"), InlineKeyboardButton("خصم الرصيد", callback_data="admin_discount")],
-        [InlineKeyboardButton("فحص رصيد API", callback_data="api_check_balance"), InlineKeyboardButton("فحص حالة طلب API", callback_data="api_order_status")],
-        [InlineKeyboardButton("عدد المستخدمين", callback_data="admin_users_count"), InlineKeyboardButton("رصيد المستخدمين", callback_data="admin_users_balance")],
-        [InlineKeyboardButton("إدارة المشرفين", callback_data="manage_mods")],
-        [InlineKeyboardButton("حضر المستخدم", callback_data="block_user"), InlineKeyboardButton("الغاء حظر المستخدم", callback_data="unblock_user")],
-        [InlineKeyboardButton("الاعلان", callback_data="admin_announce_unified")],
-        [InlineKeyboardButton("تعديل الأسعار والكميات", callback_data="edit_prices_qty")],
-        [InlineKeyboardButton("أكواد خدمات API", callback_data="admin_service_codes")],
-        [InlineKeyboardButton("نظام الإحالة", callback_data="admin_referrals")],
-        [InlineKeyboardButton("شرح الخصومات", callback_data="admin_discounts_info")],
-        [InlineKeyboardButton("المتصدرين🎉", callback_data="show_leaderboard")]
-    ]
-    return InlineKeyboardMarkup(buttons)
-# =========================
-# [ADDON] بث للإعلان داخل القنوات والمجموعات
-# =========================
-def broadcast_to_chats(update: Update, context: CallbackContext):
-    chats = db_list_chats(("group","supergroup","channel"))
-    if not chats:
-        update.message.reply_text("لا توجد قنوات/كروبات محفوظة للبث إليها بعد. أضف البوت هناك أولاً واجعله يكتب.")
-        return
-    announcement_prefix = "✨ إعلان من مالك البوت ✨\n\n"
-    sent, failed = 0, 0
-    for (cid, ctype, _title) in chats:
-        try:
-            if update.message.photo:
-                file_id = update.message.photo[-1].file_id
-                caption = (update.message.caption or "")
-                context.bot.send_photo(chat_id=cid, photo=file_id, caption=announcement_prefix+caption)
-            elif update.message.video:
-                file_id = update.message.video.file_id
-                caption = (update.message.caption or "")
-                context.bot.send_video(chat_id=cid, video=file_id, caption=announcement_prefix+caption)
-            elif update.message.voice:
-                context.bot.send_message(chat_id=cid, text=announcement_prefix)
-                context.bot.send_voice(chat_id=cid, voice=update.message.voice.file_id)
-            elif update.message.text:
-                context.bot.send_message(chat_id=cid, text=announcement_prefix + update.message.text)
-            else:
-                failed += 1
-                continue
-            sent += 1
-        except Exception as e:
-            failed += 1
-            logger.error("broadcast_to_chats error for %s: %s", cid, e)
-    update.message.reply_text(f"تم إرسال الإعلان إلى {sent} دردشة. فشل {failed}.")
-
-
-# --- Unified broadcast helpers ---
-def db_list_users():
-    try:
-        rows = _exec("SELECT user_id FROM users", (), "all") or []
-        return [int(r[0]) for r in rows if r and r[0]]
-    except Exception as e:
-        logger.error("db_list_users error: %s", e)
-        return []
-
-def _send_announcement_to(chat_id, update: Update, context: CallbackContext, prefix="✨ إعلان من مالك البوت ✨\n\n"):
-    try:
-        if update.message.photo:
-            file_id = update.message.photo[-1].file_id
-            caption = (update.message.caption or "")
-            context.bot.send_photo(chat_id=chat_id, photo=file_id, caption=prefix+caption)
-        elif update.message.video:
-            file_id = update.message.video.file_id
-            caption = (update.message.caption or "")
-            context.bot.send_video(chat_id=chat_id, video=file_id, caption=prefix+caption)
-        elif update.message.voice:
-            context.bot.send_message(chat_id=chat_id, text=prefix)
-            context.bot.send_voice(chat_id=chat_id, voice=update.message.voice.file_id)
-        elif update.message.text:
-            context.bot.send_message(chat_id=chat_id, text=prefix + update.message.text)
-        else:
-            return False
+        msg = update.effective_message
+        if not msg: return False
+        context.bot.copy_message(
+            chat_id=chat_id,
+            from_chat_id=msg.chat_id,
+            message_id=msg.message_id,
+            allow_sending_without_reply=True,
+        )
         return True
     except Exception as e:
-        logger.error("send announcement error for %s: %s", chat_id, e)
+        logging.debug("broadcast -> %s failed: %s", chat_id, e)
         return False
 
-def broadcast_to_users(update: Update, context: CallbackContext):
-    users = db_list_users()
-    if not users:
-        update.message.reply_text("لا توجد قائمة مستخدمين للبث إليها.")
+def admin_menu_add_broadcast_button(kb):
+    try:
+        rows = list(kb.inline_keyboard) if kb and getattr(kb, "inline_keyboard", None) else []
+        rows.append([InlineKeyboardButton("📣 إرسال إعلان للجميع", callback_data="admin_announce")])
+        return InlineKeyboardMarkup(rows)
+    except Exception:
+        return InlineKeyboardMarkup([[InlineKeyboardButton("📣 إرسال إعلان للجميع", callback_data="admin_announce")]])
+
+def _require_owner(update):
+    user = update.effective_user
+    return bool(user and user.id == ADMIN_ID)
+
+def on_admin_announce_btn(update, context):
+    q = update.callback_query
+    if not q: return
+    if not _require_owner(update):
+        q.answer("هذه الميزة للمالك فقط.", show_alert=True); return
+    context.user_data["waiting_for_broadcast"] = True
+    q.edit_message_text(
+        "📣 أرسل الآن نص/صورة/فيديو/صوت/ملف الإعلان.\nسأقوم بنشره على:\n"
+        "• كل المستخدمين\n• كل المجموعات\n• القنوات التي البوت مشرف بها",
+        parse_mode="HTML"
+    )
+
+def on_admin_announce_cmd(update, context):
+    if not _require_owner(update): return
+    context.user_data["waiting_for_broadcast"] = True
+    update.message.reply_text("📣 أرسل الآن رسالة الإعلان (أي نوع)، وسيتم نشرها على الجميع.")
+
+def on_admin_send_broadcast(update, context):
+    if not _require_owner(update): return
+    if not context.user_data.get("waiting_for_broadcast"):
         return
-    sent, failed = 0, 0
-    for uid in users:
-        ok = _send_announcement_to(uid, update, context)
-        if ok: sent += 1
-        else: failed += 1
-    update.message.reply_text(f"تم إرسال الإعلان (خاص) إلى {sent} مستخدم. فشل {failed}.")
+    context.user_data["waiting_for_broadcast"] = False
 
-def broadcast_unified(update: Update, context: CallbackContext, scope: str):
-    sent_total = 0
-    if scope in ("users","all"):
-        broadcast_to_users(update, context)
-    if scope in ("chats","all"):
-        broadcast_to_chats(update, context)
+    _ensure_chats_table()
+    all_targets, users, groups, channels = get_all_broadcast_targets()
 
-# =========================
-# [ADDON] زر إدارة الأسعار والكميات
-# =========================
-def _render_epq_page(services, page: int, page_size: int = 10):
-    total = len(services)
-    pages = max(1, (total + page_size - 1) // page_size)
-    page = max(1, min(page, pages))
-    start = (page-1)*page_size
-    chunk = services[start:start+page_size]
-    rows = []
-    for idx, name in enumerate(chunk, start=start):
-        cur_price = get_base_price(name)
-        rows.append([InlineKeyboardButton(f"{name} — {cur_price}$", callback_data=f"epq_pick_{idx}")])
-    nav = []
-    if page > 1:
-        nav.append(InlineKeyboardButton("⬅️ السابق", callback_data=f"epq_page_{page-1}"))
-    if page < pages:
-        nav.append(InlineKeyboardButton("التالي ➡️", callback_data=f"epq_page_{page+1}"))
-    rows.append(nav or [InlineKeyboardButton("—", callback_data="noop")])
-    rows.append([InlineKeyboardButton("رجوع", callback_data="admin_menu")])
-    return InlineKeyboardMarkup(rows), page, pages
+    ok = fail = 0
+    for i, chat_id in enumerate(all_targets, 1):
+        if _copy_to(chat_id, update, context): ok += 1
+        else: fail += 1
+        if i % 25 == 0:
+            time.sleep(1.0)
 
-# نضيف فروع جديدة داخل button_handler
-_old_button_handler = button_handler
-def button_handler(update: Update, context: CallbackContext):
-    _hook_record_chat_from_update(update)
-    query = update.callback_query
-    data = query.data if query else None
-    if data == "admin_announce_chats" and _is_owner_or_admin(query.from_user.id):
-        context.user_data["waiting_for_broadcast_chats"] = True
-        query.answer()
-        query.edit_message_text("أرسل الآن نص/صورة/فيديو/صوت وسيتم بثّه إلى جميع القنوات والكروبات التي يتواجد فيها البوت.")
-        return
-    if data and data.startswith("epq_page_") and _is_owner_or_admin(query.from_user.id):
-        page = int(data.split("_")[-1])
-        services = context.user_data.get("__epq_list__") or _all_service_names_sorted()
-        kb, p, pages = _render_epq_page(services, page)
-        context.user_data["__epq_list__"] = services
-        query.edit_message_text(f"تعديل الأسعار والكميات (صفحة {p}/{pages}):", reply_markup=kb)
-        return
-    if data == "edit_prices_qty" and _is_owner_or_admin(query.from_user.id):
-        services = _all_service_names_sorted()
-        kb, p, pages = _render_epq_page(services, 1)
-        context.user_data["__epq_list__"] = services
-        query.edit_message_text(f"تعديل الأسعار والكميات (صفحة {p}/{pages}):", reply_markup=kb)
-        return
-    if data and data.startswith("epq_pick_") and _is_owner_or_admin(query.from_user.id):
-        idx = int(data.split("_")[-1])
-        services = context.user_data.get("__epq_list__") or _all_service_names_sorted()
-        if idx < 0 or idx >= len(services):
-            query.answer("خارج النطاق.", show_alert=True)
-            return
-        target = services[idx]
-        context.user_data["__epq_target__"] = target
-        context.user_data["waiting_for_epq_input"] = True
-        cur_price = get_base_price(target)
-        ov = db_get_service_override(target) if 'db_get_service_override' in globals() else None
-        sid = (ov or {}).get("service_id", service_api_mapping.get(target,{}).get("service_id","—"))
-        qm  = (ov or {}).get("quantity_multiplier", service_api_mapping.get(target,{}).get("quantity_multiplier","—"))
-        msg = (
-            f"الخدمة المختارة:\n<b>{target}</b>\n"
-            f"السعر الحالي: <b>{cur_price}$</b>\n"
-            f"service_id: <b>{sid}</b>\n"
-            f"quantity_multiplier: <b>{qm}</b>\n\n"
-            "أرسل القيم التي تريدها بصيغة واحدة من التالي:\n"
-            "• فقط السعر: مثال <code>3.75</code>\n"
-            "• أو مع الكمية: <code>price=3.75 quantity=1000</code>\n"
-            "• أو مع كود الخدمة: <code>price=3.75 quantity=1000 service_id=13912</code>\n"
-            "• يمكنك تعديل واحدة فقط أيضاً، مثل: <code>quantity=5000</code>\n"
-        )
-        try:
-            query.edit_message_text(msg, parse_mode="HTML")
-        except Exception:
-            context.bot.send_message(chat_id=update.effective_chat.id, text=msg, parse_mode="HTML")
-        return
-    # وإلا نمرر للمعالج الأصلي
-    return _old_button_handler(update, context)
+    update.effective_message.reply_text(
+        "✅ تم الإرسال.\n"
+        f"• نجحت: {ok}\n"
+        f"• فشلت: {fail}\n"
+        f"• المستخدمين: {len(users)} | المجموعات: {len(groups)} | القنوات (مشرف): {len(channels)}"
+    )
 
-# اعتراض رسائل النص/الوسائط من المالك للحالات الجديدة
-_old_admin_text_gate = _admin_text_gate
-def _admin_text_gate(update: Update, context: CallbackContext):
-    _hook_record_chat_from_update(update)
-    user_id = update.effective_user.id
-
-    # Unified broadcast text/media handling
-    if user_id == ADMIN_ID and context.user_data.get("waiting_for_broadcast_unified"):
-        scope = context.user_data.get("broadcast_scope","all")
-        try:
-            broadcast_unified(update, context, scope)
-        finally:
-            context.user_data.pop("waiting_for_broadcast_unified", None)
-            context.user_data.pop("broadcast_scope", None)
-        return True
-    if user_id == ADMIN_ID and context.user_data.get("waiting_for_broadcast_chats"):
-        # نفّذ البث للقنوات والكروبات ثم حرّر العلم
-        try:
-            broadcast_to_chats(update, context)
-        finally:
-            context.user_data.pop("waiting_for_broadcast_chats", None)
-        return True
-
-    if user_id == ADMIN_ID and context.user_data.get("waiting_for_epq_input"):
-        txt = update.message.text or ""
-        target = context.user_data.get("__epq_target__")
-        if not target:
-            update.message.reply_text("خطأ: لا توجد خدمة محددة.")
-            context.user_data.pop("waiting_for_epq_input", None)
-            return True
-
-        # تحليل الإدخال
-        price, quantity, service_id_val = None, None, None
-        if txt.strip() and re.fullmatch(r"\d+(\.\d+)?", txt.strip()):
-            price = float(txt.strip())
-        else:
-            # صيغة key=value
-            kv = dict()
-            for part in re.split(r"[ \n,;]+", txt.strip()):
-                if "=" in part:
-                    k,v = part.split("=",1)
-                    kv[k.strip().lower()] = v.strip()
-            if "price" in kv:
-                try: price = float(kv["price"])
-                except: pass
-            if "quantity" in kv:
-                try: quantity = int(kv["quantity"])
-                except: pass
-            if "service_id" in kv:
-                service_id_val = kv["service_id"]
-
-        # حفظ ما أمكن
-        msgs = []
-        if price is not None:
-            try:
-                db_set_price_override(target, price)
-                msgs.append(f"✅ تم ضبط السعر إلى {price}$")
-            except Exception as e:
-                msgs.append(f"❌ تعذر حفظ السعر: {e}")
-        if quantity is not None or service_id_val is not None:
-            try:
-                base = service_api_mapping.get(target, {})
-                sid = service_id_val if service_id_val is not None else base.get("service_id","")
-                qm  = quantity if quantity is not None else int(base.get("quantity_multiplier", 1000))
-                db_set_service_override(target, sid, qm)
-                msgs.append(f"✅ تم ضبط API: service_id={sid}, quantity_multiplier={qm}")
-            except Exception as e:
-                msgs.append(f"❌ تعذر حفظ إعدادات API: {e}")
-
-        context.user_data.pop("waiting_for_epq_input", None)
-        m = "تم التحديث.\n" + ("\n".join(msgs) if msgs else "لم يتم تلقي أي قيم صحيحة.")
-        update.message.reply_text(m, reply_markup=admin_menu_keyboard())
-        return True
-
-    # رجوع للسلوك الأصلي
-    return _old_admin_text_gate(update, context)
-
-# ==== END ADDONS ====
+def register_broadcast_feature(dispatcher):
+    _ensure_chats_table()
+    dispatcher.add_handler(ChatMemberHandler(on_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
+    dispatcher.add_handler(MessageHandler(Filters.all, track_any_chat), group=1)
+    dispatcher.add_handler(CallbackQueryHandler(on_admin_announce_btn, pattern=r'^admin_announce$'))
+    dispatcher.add_handler(CommandHandler("send_to_all", on_admin_announce_cmd))
+    dispatcher.add_handler(MessageHandler(Filters.user(user_id=ADMIN_ID) & Filters.all, on_admin_send_broadcast), group=0)
+# ==================== [/Broadcast Feature] ====================
