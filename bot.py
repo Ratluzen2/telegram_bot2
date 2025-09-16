@@ -1546,73 +1546,73 @@ def button_handler(update: Update, context: CallbackContext):
 
 
 # ======= الأسعار والكميات (لوحة المالك) =======
-if data == "admin_price_qty":
-    kb = [
-        [InlineKeyboardButton("سوشيال (SMM)", callback_data="prq_cat_smm")],
-        [InlineKeyboardButton("ببجي", callback_data="prq_cat_pubg"), InlineKeyboardButton("آيتونز", callback_data="prq_cat_itunes")],
-        [InlineKeyboardButton("تليجرام", callback_data="prq_cat_telegram"), InlineKeyboardButton("لودو", callback_data="prq_cat_ludo")],
-        [InlineKeyboardButton("رجوع", callback_data="admin_menu")]
-    ]
-    query.edit_message_text("اختر القسم الذي تريد تعديل أسعاره/كمياته:", reply_markup=InlineKeyboardMarkup(kb))
-    return
-
-if data.startswith("prq_cat_"):
-    cat = data.split("_", 2)[-1]
-    context.user_data["__prq_cat__"] = cat
-    context.user_data["__prq_list__"] = _prq_list_services(cat)
-    query.edit_message_text(_prq_render_page(context, 0), reply_markup=_prq_page_kb(0))
-    return
-
-if data.startswith("prq_page_"):
-    try:
-        _, _, off = data.split("_", 2)
-        off = int(off)
-    except Exception:
-        off = 0
-    query.edit_message_text(_prq_render_page(context, off), reply_markup=_prq_page_kb(off))
-    return
-
-if data.startswith("prq_pick_"):
-    idx = int(data.split("_")[-1])
-    cat = context.user_data.get("__prq_cat__") or "smm"
-    lst = context.user_data.get("__prq_list__", [])
-    if idx < 0 or idx >= len(lst):
-        query.answer("العنصر غير موجود.", show_alert=True); return
-    name, base_price = lst[idx]
-    context.user_data["__prq_pick_idx__"] = idx
-    query.edit_message_text(_prq_render_item(cat, name, base_price), reply_markup=_prq_item_kb(cat, idx))
-    return
-
-if data.startswith("prq_edit_price_"):
-    idx = int(data.split("_")[-1])
-    lst = context.user_data.get("__prq_list__", [])
-    if idx < 0 or idx >= len(lst):
-        query.answer("غير موجود.", show_alert=True); return
-    name, _ = lst[idx]
-    context.user_data["waiting_edit_price_for"] = name
-    query.edit_message_text(f"✏️ أرسل السعر الجديد بالدولار للخدمة:\n{name}\nمثال: 3.75\n\nأرسل 'الغاء' للإلغاء.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data=f"prq_pick_{idx}")]]))
-    return
-
-if data.startswith("prq_edit_qty_"):
-    idx = int(data.split("_")[-1])
-    lst = context.user_data.get("__prq_list__", [])
-    if idx < 0 or idx >= len(lst):
-        query.answer("غير موجود.", show_alert=True); return
-    name, _ = lst[idx]
-    context.user_data["waiting_edit_qty_for"] = name
-    query.edit_message_text(f"✏️ أرسل الكمية الجديدة (quantity_multiplier) للخدمة:\n{name}\nمثال: 5000\n\nأرسل 'الغاء' للإلغاء.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data=f"prq_pick_{idx}")]]))
-    return
-
-if data.startswith("prq_del_price_"):
-    idx = int(data.split("_")[-1])
-    lst = context.user_data.get("__prq_list__", [])
-    if idx < 0 or idx >= len(lst):
-        query.answer("غير موجود.", show_alert=True); return
-    name, _ = lst[idx]
-    db_delete_price_override(name)
-    query.answer("تم حذف السعر المخصص.")
-    query.edit_message_text("تم حذف السعر المخصص. اختر العملية:", reply_markup=_prq_item_kb(context.user_data.get("__prq_cat__","smm"), idx))
-    return
+        if data == "admin_price_qty":
+            kb = [
+                [InlineKeyboardButton("سوشيال (SMM)", callback_data="prq_cat_smm")],
+                [InlineKeyboardButton("ببجي", callback_data="prq_cat_pubg"), InlineKeyboardButton("آيتونز", callback_data="prq_cat_itunes")],
+                [InlineKeyboardButton("تليجرام", callback_data="prq_cat_telegram"), InlineKeyboardButton("لودو", callback_data="prq_cat_ludo")],
+                [InlineKeyboardButton("رجوع", callback_data="admin_menu")]
+            ]
+            query.edit_message_text("اختر القسم الذي تريد تعديل أسعاره/كمياته:", reply_markup=InlineKeyboardMarkup(kb))
+            return
+        
+        if data.startswith("prq_cat_"):
+            cat = data.split("_", 2)[-1]
+            context.user_data["__prq_cat__"] = cat
+            context.user_data["__prq_list__"] = _prq_list_services(cat)
+            query.edit_message_text(_prq_render_page(context, 0), reply_markup=_prq_page_kb(0))
+            return
+        
+        if data.startswith("prq_page_"):
+            try:
+                _, _, off = data.split("_", 2)
+                off = int(off)
+            except Exception:
+                off = 0
+            query.edit_message_text(_prq_render_page(context, off), reply_markup=_prq_page_kb(off))
+            return
+        
+        if data.startswith("prq_pick_"):
+            idx = int(data.split("_")[-1])
+            cat = context.user_data.get("__prq_cat__") or "smm"
+            lst = context.user_data.get("__prq_list__", [])
+            if idx < 0 or idx >= len(lst):
+                query.answer("العنصر غير موجود.", show_alert=True); return
+            name, base_price = lst[idx]
+            context.user_data["__prq_pick_idx__"] = idx
+            query.edit_message_text(_prq_render_item(cat, name, base_price), reply_markup=_prq_item_kb(cat, idx))
+            return
+        
+        if data.startswith("prq_edit_price_"):
+            idx = int(data.split("_")[-1])
+            lst = context.user_data.get("__prq_list__", [])
+            if idx < 0 or idx >= len(lst):
+                query.answer("غير موجود.", show_alert=True); return
+            name, _ = lst[idx]
+            context.user_data["waiting_edit_price_for"] = name
+            query.edit_message_text(f"✏️ أرسل السعر الجديد بالدولار للخدمة:\n{name}\nمثال: 3.75\n\nأرسل 'الغاء' للإلغاء.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data=f"prq_pick_{idx}")]]))
+            return
+        
+        if data.startswith("prq_edit_qty_"):
+            idx = int(data.split("_")[-1])
+            lst = context.user_data.get("__prq_list__", [])
+            if idx < 0 or idx >= len(lst):
+                query.answer("غير موجود.", show_alert=True); return
+            name, _ = lst[idx]
+            context.user_data["waiting_edit_qty_for"] = name
+            query.edit_message_text(f"✏️ أرسل الكمية الجديدة (quantity_multiplier) للخدمة:\n{name}\nمثال: 5000\n\nأرسل 'الغاء' للإلغاء.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data=f"prq_pick_{idx}")]]))
+            return
+        
+        if data.startswith("prq_del_price_"):
+            idx = int(data.split("_")[-1])
+            lst = context.user_data.get("__prq_list__", [])
+            if idx < 0 or idx >= len(lst):
+                query.answer("غير موجود.", show_alert=True); return
+            name, _ = lst[idx]
+            db_delete_price_override(name)
+            query.answer("تم حذف السعر المخصص.")
+            query.edit_message_text("تم حذف السعر المخصص. اختر العملية:", reply_markup=_prq_item_kb(context.user_data.get("__prq_cat__","smm"), idx))
+            return
 
 # ======= محرر أكواد الخدمات (API) =======
         if data == "admin_service_codes":
@@ -2443,37 +2443,37 @@ def handle_messages(update: Update, context: CallbackContext):
 
     
 
-# ======== تعديل السعر/الكمية (المالك) ========
-if user_id == ADMIN_ID and context.user_data.get("waiting_edit_price_for"):
-    name = context.user_data.pop("waiting_edit_price_for", None)
-    if text.strip().lower() in ("الغاء", "إلغاء", "cancel"):
-        update.message.reply_text("تم الإلغاء.")
+    # ======== تعديل السعر/الكمية (المالك) ========
+    if user_id == ADMIN_ID and context.user_data.get("waiting_edit_price_for"):
+        name = context.user_data.pop("waiting_edit_price_for", None)
+        if text.strip().lower() in ("الغاء", "إلغاء", "cancel"):
+            update.message.reply_text("تم الإلغاء.")
+            return
+        try:
+            price = float(text.strip().replace(",", "."))
+        except Exception:
+            update.message.reply_text("❌ صيغة السعر غير صحيحة. مثال صحيح: 3.75")
+            return
+        db_set_price_override(name, price)
+        update.message.reply_text(f"✅ تم تحديث سعر الخدمة:\n{name}\nالسعر الجديد: {price}$")
         return
-    try:
-        price = float(text.strip().replace(",", "."))
-    except Exception:
-        update.message.reply_text("❌ صيغة السعر غير صحيحة. مثال صحيح: 3.75")
+    
+    if user_id == ADMIN_ID and context.user_data.get("waiting_edit_qty_for"):
+        name = context.user_data.pop("waiting_edit_qty_for", None)
+        if text.strip().lower() in ("الغاء", "إلغاء", "cancel"):
+            update.message.reply_text("تم الإلغاء.")
+            return
+        try:
+            q = int(float(text.strip()))
+            if q <= 0:
+                raise ValueError()
+        except Exception:
+            update.message.reply_text("❌ صيغة الكمية غير صحيحة. مثال صحيح: 5000")
+            return
+        db_update_quantity_only(name, q)
+        update.message.reply_text(f"✅ تم تحديث كمية الخدمة (quantity_multiplier):\n{name}\nالكمية الجديدة: {q}")
         return
-    db_set_price_override(name, price)
-    update.message.reply_text(f"✅ تم تحديث سعر الخدمة:\n{name}\nالسعر الجديد: {price}$")
-    return
-
-if user_id == ADMIN_ID and context.user_data.get("waiting_edit_qty_for"):
-    name = context.user_data.pop("waiting_edit_qty_for", None)
-    if text.strip().lower() in ("الغاء", "إلغاء", "cancel"):
-        update.message.reply_text("تم الإلغاء.")
-        return
-    try:
-        q = int(float(text.strip()))
-        if q <= 0:
-            raise ValueError()
-    except Exception:
-        update.message.reply_text("❌ صيغة الكمية غير صحيحة. مثال صحيح: 5000")
-        return
-    db_update_quantity_only(name, q)
-    update.message.reply_text(f"✅ تم تحديث كمية الخدمة (quantity_multiplier):\n{name}\nالكمية الجديدة: {q}")
-    return
-
+    
 # ======== شحن آسياسيل (المستخدم) + حماية ========
     if context.user_data.get("waiting_for_card"):
         raw = text.strip()
@@ -2826,4 +2826,3 @@ def _prq_item_kb(cat: str, idx: int):
     kb.append([InlineKeyboardButton("🗑 حذف السعر المخصص", callback_data=f"prq_del_price_{idx}")])
     kb.append([InlineKeyboardButton("رجوع", callback_data=f"prq_page_{ ( ( (idx//8)*8 ) ) }")])
     return InlineKeyboardMarkup(kb)
-
