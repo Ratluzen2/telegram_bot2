@@ -1114,7 +1114,7 @@ def button_handler(update: Update, context: CallbackContext):
                 [InlineKeyboardButton("رجوع", callback_data="admin_menu")]
             ])
             query.answer()
-            query.edit_message_text("اختر نوع البث للإعلان:", reply_markup=kb)
+            _safe_edit(update, query, "اختر نوع البث للإعلان:", reply_markup=kb)
         else:
             query.answer("هذه الميزة للمالك فقط.", show_alert=True)
         return
@@ -1125,7 +1125,7 @@ def button_handler(update: Update, context: CallbackContext):
             context.user_data["waiting_for_broadcast_unified"] = True
             context.user_data["broadcast_scope"] = scope
             query.answer()
-            query.edit_message_text(f"أرسل الآن نص/صورة/فيديو/صوت وسيتم بثّه إلى: { 'الخاص' if scope=='users' else ('القنوات/الكروبات' if scope=='chats' else 'الكل') }")
+            _safe_edit(update, query, f"أرسل الآن نص/صورة/فيديو/صوت وسيتم بثّه إلى: { 'الخاص' if scope=='users' else ('القنوات/الكروبات' if scope=='chats' else 'الكل') }")
         else:
             query.answer("هذه الميزة للمالك فقط.", show_alert=True)
         return
