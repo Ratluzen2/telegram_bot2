@@ -729,6 +729,13 @@ def get_base_price(service_name: str, default_price: float) -> float:
         return float(default_price)
 
 def get_display_price(user_id: int, service_name: str, default_price: float, kind: str="generic") -> float:
+
+def _format_user_service_label(user_id: int, name: str, base_price: float, kind: str="generic") -> str:
+    price = get_display_price(user_id, name, base_price, kind)
+    ov = db_get_service_override(name) or {}
+    q = ov.get("quantity_multiplier") or (service_api_mapping.get(name) or {}).get("quantity_multiplier")
+    return f"{name} - {price}$" + (f" (الكمية: {q})" if q else "")
+
     """يُستخدم عند عرض الأزرار؛ يطبّق override ثم خصم المشرف (إن وُجد)."""
     base = get_base_price(service_name, default_price)
     return get_effective_price(user_id, service_name, base, kind)
@@ -849,7 +856,6 @@ def _ap_list_services(update: Update, context: CallbackContext, query, cat: str,
             ludo_services.get(name) if cat=="ludo" else 0
         )
         base = get_base_price(name, default_price or 0)
-        # إظهار الكمية إن وُجد override أو كان لها قيمة افتراضية في mapping
         qty_txt = ""
         ov = db_get_service_override(name) or {}
         q = ov.get("quantity_multiplier")
@@ -857,7 +863,7 @@ def _ap_list_services(update: Update, context: CallbackContext, query, cat: str,
             base_map = service_api_mapping.get(name) or {}
             q = base_map.get("quantity_multiplier")
         if q is not None:
-            qty_txt = f" | الكمية: {q}" 
+            qty_txt = f" | الكمية: {q}"
         lines.append(f"- #{i} • {name} • السعر: {base}${qty_txt}")
 
     buttons = []
@@ -886,13 +892,14 @@ def _ap_show_service_actions(update: Update, context: CallbackContext, query, id
         query.answer("خيار غير صالح.", show_alert=True); return
     name = items[idx]
 
-    # نجعل تعديل الكمية متاحًا لجميع الخدمات (سواء لديها mapping أم لا)
+    # إتاحة تعديل الكمية لكل الخدمات
     btns = [[InlineKeyboardButton("💲 تعديل السعر", callback_data=f"ap_setprice_{idx}")]]
     btns.append([InlineKeyboardButton("📦 تعديل الكمية", callback_data=f"ap_setqty_{idx}")])
     btns.append([InlineKeyboardButton("❌ حذف تعديل السعر", callback_data=f"ap_delprice_{idx}")])
     btns.append([InlineKeyboardButton("↩️ إعادة الكمية للافتراضي", callback_data=f"ap_delqty_{idx}")])
     btns.append([InlineKeyboardButton("رجوع", callback_data=f"ap_page_{context.user_data.get('ap_cat','smm')}_{context.user_data.get('ap_page',0)}")])
     query.edit_message_text(f"الخدمة:\n• {name}\nاختر الإجراء:", reply_markup=InlineKeyboardMarkup(btns))
+(f"الخدمة:\n• {name}\nاختر الإجراء:", reply_markup=InlineKeyboardMarkup(btns))
 
 # ======= خدمات شراء رصيد الهاتف (قسم جديد) =======
 mobile_recharge_services = {
@@ -917,7 +924,7 @@ def mobile_recharge_services_keyboard(user_id: int):
     buttons = []
     for service_name, base_price in mobile_recharge_services.items():
         eff = get_display_price(user_id, service_name, base_price, "mobile")
-        buttons.append([InlineKeyboardButton(f"{service_name} - {eff}$", callback_data=f"mobile_service_{service_name}")])
+        buttons.append([InlineKeyboardButton(_format_user_service_label(user_id, service_name, base_price, \"mobile\"), callback_data=f\"mobile_service_{service_name}\")])
     buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
     return InlineKeyboardMarkup(buttons)
 
@@ -1340,17 +1347,18 @@ def button_handler(update: Update, context: CallbackContext):
         _ap_list_services(update, context, query, cat, 0); return
 
     if data.startswith("ap_sel_"):
-        if user_id != ADMIN_ID: 
+        if user_id != ADMIN_ID:
             query.answer("غير مسموح.", show_alert=True); return
         try:
             idx = int(data.replace("ap_sel_", ""))
         except Exception:
             query.answer("خيار غير صالح.", show_alert=True); return
         _ap_show_service_actions(update, context, query, idx); return
-
-    if data.startswith("ap_setprice_"):
-        if user_id != ADMIN_ID: 
-            query.answer("غير مسموح.", show_alert=True); return
+        srv = items[idx]
+        context.user_data["waiting_for_price_edit_service"] = srv
+        query.edit_message_text(f"أرسل السعر الجديد بالدولار لخدمة:\n• {srv}\nمثال: 7.5",
+                                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data=f"ap_sel_{idx}")]]))
+        return
 
     if data.startswith("ap_setqty_"):
         if user_id != ADMIN_ID: 
@@ -1361,17 +1369,9 @@ def button_handler(update: Update, context: CallbackContext):
             query.answer("خيار غير صالح.", show_alert=True); return
         srv = items[idx]
         # السماح بتعديل الكمية لكل الخدمات
+        #", show_alert=True); return
         context.user_data["waiting_for_qty_edit_service"] = srv
         query.edit_message_text(f"أرسل الكمية الجديدة (عدد صحيح) لخدمة:\n• {srv}\nمثال: 5000",
-                                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data=f"ap_sel_{idx}")]]))
-        return
-        idx = int(data.replace("ap_setprice_", ""))
-        items = context.user_data.get("ap_map") or []
-        if idx < 0 or idx >= len(items):
-            query.answer("خيار غير صالح.", show_alert=True); return
-        srv = items[idx]
-        context.user_data["waiting_for_price_edit_service"] = srv
-        query.edit_message_text(f"أرسل السعر الجديد بالدولار لخدمة:\n• {srv}\nمثال: 7.5",
                                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data=f"ap_sel_{idx}")]]))
         return
 
@@ -1396,15 +1396,11 @@ def button_handler(update: Update, context: CallbackContext):
         if idx < 0 or idx >= len(items):
             query.answer("خيار غير صالح.", show_alert=True); return
         srv = items[idx]
-        # إعادة الكمية للافتراصي:
+        # إعادة الكمية للافتراصي (إما حذف السجل أو إعادة تعيينه)
         try:
-            base = service_api_mapping.get(srv)
-            if base:
-                base_q = int(base.get("quantity_multiplier", 1000))
-                db_set_quantity_only(srv, base_q)
-            else:
-                # إن لم تكن الخدمة في mapping نحذف السجل لإزالة أي كمية مخصّصة
-                db_delete_service_override(srv)
+            # نحافظ على service_id لو موجود
+            base_q = (service_api_mapping.get(srv) or {}).get("quantity_multiplier", 1000)
+            db_set_quantity_only(srv, base_q)
         except Exception:
             pass
         query.edit_message_text(f"تمت إعادة الكمية للافتراصي.\n• {srv}",
@@ -1492,7 +1488,7 @@ def button_handler(update: Update, context: CallbackContext):
         service_buttons = []
         for name, price in followers_services.items():
             eff = get_display_price(user_id, name, price, "generic")
-            service_buttons.append([InlineKeyboardButton(f"{name} - {eff}$", callback_data=f"service_{name}")])
+            service_buttons.append([InlineKeyboardButton(_format_user_service_label(user_id, name, price, \"generic\"), callback_data=f\"service_{name}\")])
         service_buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
         query.edit_message_text("اختر الخدمة المطلوبة:", reply_markup=InlineKeyboardMarkup(service_buttons))
         return
@@ -1502,7 +1498,7 @@ def button_handler(update: Update, context: CallbackContext):
         service_buttons = []
         for name, price in likes_services.items():
             eff = get_display_price(user_id, name, price, "generic")
-            service_buttons.append([InlineKeyboardButton(f"{name} - {eff}$", callback_data=f"service_{name}")])
+            service_buttons.append([InlineKeyboardButton(_format_user_service_label(user_id, name, price, \"generic\"), callback_data=f\"service_{name}\")])
         service_buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
         query.edit_message_text("اختر الخدمة المطلوبة:", reply_markup=InlineKeyboardMarkup(service_buttons))
         return
@@ -1512,7 +1508,7 @@ def button_handler(update: Update, context: CallbackContext):
         service_buttons = []
         for name, price in views_services.items():
             eff = get_display_price(user_id, name, price, "generic")
-            service_buttons.append([InlineKeyboardButton(f"{name} - {eff}$", callback_data=f"service_{name}")])
+            service_buttons.append([InlineKeyboardButton(_format_user_service_label(user_id, name, price, \"generic\"), callback_data=f\"service_{name}\")])
         service_buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
         query.edit_message_text("اختر الخدمة المطلوبة:", reply_markup=InlineKeyboardMarkup(service_buttons))
         return
@@ -1522,7 +1518,7 @@ def button_handler(update: Update, context: CallbackContext):
         service_buttons = []
         for name, price in live_views_services.items():
             eff = get_display_price(user_id, name, price, "generic")
-            service_buttons.append([InlineKeyboardButton(f"{name} - {eff}$", callback_data=f"service_{name}")])
+            service_buttons.append([InlineKeyboardButton(_format_user_service_label(user_id, name, price, \"generic\"), callback_data=f\"service_{name}\")])
         service_buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
         query.edit_message_text("اختر الخدمة المطلوبة:", reply_markup=InlineKeyboardMarkup(service_buttons))
         return
@@ -1584,7 +1580,7 @@ def button_handler(update: Update, context: CallbackContext):
         service_buttons = []
         for name, base_price in pubg_services.items():
             eff = get_effective_price(user_id, name, base_price, "pubg")
-            service_buttons.append([InlineKeyboardButton(f"{name} - {eff}$", callback_data=f"pubg_service_{name}")])
+            service_buttons.append([InlineKeyboardButton(_format_user_service_label(user_id, name, price, \"pubg\"), callback_data=f\"pubg_service_{name}\")])
         service_buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
         query.edit_message_text("اختر خدمة شحن شدات ببجي:", reply_markup=InlineKeyboardMarkup(service_buttons))
         return
