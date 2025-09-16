@@ -1548,11 +1548,26 @@ def button_handler(update: Update, context: CallbackContext):
 
 
 # ======= محرر أكواد الخدمات (API) =======
-        if data == "admin_service_codes":
-            pairs = build_service_groups()
-            if not pairs:
-                query.edit_message_text("لا توجد خدمات معرّفة حالياً.")
-                return
+        
+if data == "admin_service_codes":
+    kb = []
+    names = []
+    display = ["🛠️ اختر مجموعة لتعديل كود الـAPI لها (أرسل رقمًا واحدًا فقط):\n"]
+    # أمثلة لمجموعات الخدمات (عدّل حسب مشروعك)
+    groups = [
+        ("SMM عامة", "grp_smm"),
+        ("PUBG", "grp_pubg"),
+        ("iTunes", "grp_itunes"),
+        ("Telegram", "grp_telegram"),
+        ("Ludo", "grp_ludo"),
+    ]
+    for i, (title, code) in enumerate(groups, start=1):
+        display.append(f"{i}) {title}")
+        kb.append([InlineKeyboardButton(f"{i}", callback_data=f"sc_pick_{i-1}")])
+        names.append(code)
+    context.user_data["__sc_groups__"] = names
+    query.edit_message_text("\n".join(display), reply_markup=InlineKeyboardMarkup(kb))
+    return
 
 # ======= الأسعار والكميات (لوحة المالك) =======
 
@@ -1702,7 +1717,7 @@ if data.startswith("prq_del_price_"):
     cat = context.user_data.get("__prq_cat__","smm")
     query.edit_message_text("تم حذف السعر المخصص. اختر العملية:", reply_markup=_prq_item_kb(cat, idx))
     return
-            kb = []; names = []; display = ["🛠️ اختر مجموعة لتعديل كود الـAPI لها (أرسل رقمًا واحدًا فقط):\n"]
+kb = []; names = []; display = ["🛠️ اختر مجموعة لتعديل كود الـAPI لها (أرسل رقمًا واحدًا فقط):\n"]
             for idx, (gname, services) in enumerate(pairs):
                 names.append((gname, services))
                 display.append(f"{idx+1}) {gname} — {len(services)} خدمة")
