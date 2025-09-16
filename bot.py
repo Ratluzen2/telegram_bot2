@@ -365,9 +365,29 @@ _exec("CREATE INDEX IF NOT EXISTS idx_orders_status_cat ON orders(status, catego
 # جدول overrides لتعيين service_id/quantity_multiplier مخصص لكل خدمة
 _exec("""CREATE TABLE IF NOT EXISTS service_api_overrides (
     service_name TEXT PRIMARY KEY,
-    service_id   TEXT,
+    service_id TEXT,
     quantity_multiplier INTEGER
 )""")
+
+# === أسعار الخدمات (Overrides) ===
+_exec("""CREATE TABLE IF NOT EXISTS service_price_overrides (
+    service_name TEXT PRIMARY KEY,
+    price REAL
+)""")
+
+def db_get_price_override(service_name: str):
+    row = _exec("SELECT price FROM service_price_overrides WHERE service_name=%s", (service_name,), "one")
+    return None if not row else float(row[0])
+
+def db_set_price_override(service_name: str, price: float):
+    _exec("""INSERT INTO service_price_overrides (service_name, price)
+             VALUES (%s,%s)
+             ON CONFLICT(service_name) DO UPDATE SET price=EXCLUDED.price""",
+          (service_name, float(price)))
+
+def db_delete_price_override(service_name: str):
+    _exec("DELETE FROM service_price_overrides WHERE service_name=%s", (service_name,))
+
 
 def db_get_service_override(service_name: str):
     row = _exec("SELECT service_id, quantity_multiplier FROM service_api_overrides WHERE service_name=%s",
@@ -696,6 +716,36 @@ def get_effective_price(user_id: int, service_name: str, base_price: float, kind
         logger.error("get_effective_price error: %s", e)
         return float(base_price)
 
+
+# =========================
+# دوال مساعدة: السعر الفعلي والعرض مع الخصم + تعيين كمية API
+# =========================
+def get_base_price(service_name: str, default_price: float) -> float:
+    """يرجع سعر الأساس مع مراعاة أي override في قاعدة البيانات."""
+    try:
+        p = db_get_price_override(service_name)
+        return float(p) if p is not None else float(default_price)
+    except Exception:
+        return float(default_price)
+
+def get_display_price(user_id: int, service_name: str, default_price: float, kind: str="generic") -> float:
+    """يُستخدم عند عرض الأزرار؛ يطبّق override ثم خصم المشرف (إن وُجد)."""
+    base = get_base_price(service_name, default_price)
+    return get_effective_price(user_id, service_name, base, kind)
+
+def _get_default_service_id(service_name: str) -> str:
+    base = service_api_mapping.get(service_name) or {}
+    sid = base.get("service_id")
+    return str(sid) if sid is not None else ""
+
+def db_set_quantity_only(service_name: str, quantity_multiplier: int):
+    """تحديث الكمية فقط مع الحفاظ على service_id الحالي إن وجد، أو الافتراضي."""
+    ov = db_get_service_override(service_name) or {}
+    sid = ov.get("service_id") or _get_default_service_id(service_name)
+    if not sid:
+        sid = _get_default_service_id(service_name)
+    db_set_service_override(service_name, sid, int(quantity_multiplier))
+
 # =========================
 # لوحات المفاتيح (Keyboards)
 # =========================
@@ -744,6 +794,106 @@ def admin_menu_keyboard():
     return InlineKeyboardMarkup(buttons)
 
 
+
+# =========================
+# محرر أسعار وكميات الخدمات (لوحة المالك)
+# =========================
+def _ap_build_catalog():
+    """يبني كتالوج الخدمات من القواميس الحالية (اسم التصنيف، اسم الخدمة، السعر الافتراضي)."""
+    catalog = {
+        "smm": list(services_dict.keys()),
+        "pubg": list(pubg_services.keys()),
+        "itunes": list(itunes_services.keys()),
+        "telegram": list(telegram_services.keys()),
+        "mobile": list(mobile_recharge_services.keys()),
+        "ludo": list(ludo_services.keys())
+    }
+    return catalog
+
+def _ap_show_categories(query):
+    kb = [
+        [InlineKeyboardButton("سوشيال (SMM)", callback_data="ap_cat_smm")],
+        [InlineKeyboardButton("PUBG", callback_data="ap_cat_pubg")],
+        [InlineKeyboardButton("iTunes", callback_data="ap_cat_itunes")],
+        [InlineKeyboardButton("Telegram", callback_data="ap_cat_telegram")],
+        [InlineKeyboardButton("Mobile رصيد", callback_data="ap_cat_mobile")],
+        [InlineKeyboardButton("Ludo", callback_data="ap_cat_ludo")],
+        [InlineKeyboardButton("رجوع", callback_data="admin_menu")]
+    ]
+    query.edit_message_text("اختر القسم الذي تريد تعديل أسعاره/كمياته:", reply_markup=InlineKeyboardMarkup(kb))
+
+def _ap_list_services(update: Update, context: CallbackContext, query, cat: str, page: int = 0, page_size: int = 10):
+    catalog = _ap_build_catalog()
+    items = catalog.get(cat, [])
+    total = len(items)
+    start = page * page_size
+    end = min(total, start + page_size)
+    if start >= total and total > 0:
+        page = 0; start = 0; end = min(total, page_size)
+    view = items[start:end]
+
+    # خزّن الخريطة
+    context.user_data["ap_map"] = items
+    context.user_data["ap_cat"] = cat
+    context.user_data["ap_page"] = page
+
+    lines = [f"القسم: {cat} — الصفحة {page+1}/{(total-1)//page_size+1 if total else 1}", ""]
+    for i, name in enumerate(view, start=start):
+        # السعر الحالي
+        default_price = (
+            services_dict.get(name) if cat=="smm" else
+            pubg_services.get(name) if cat=="pubg" else
+            itunes_services.get(name) if cat=="itunes" else
+            telegram_services.get(name) if cat=="telegram" else
+            mobile_recharge_services.get(name) if cat=="mobile" else
+            ludo_services.get(name) if cat=="ludo" else 0
+        )
+        base = get_base_price(name, default_price or 0)
+        # إظهار الكمية إن وُجد override أو كان لها قيمة افتراضية في mapping
+        qty_txt = ""
+        ov = db_get_service_override(name) or {}
+        q = ov.get("quantity_multiplier")
+        if q is None:
+            base_map = service_api_mapping.get(name) or {}
+            q = base_map.get("quantity_multiplier")
+        if q is not None:
+            qty_txt = f" | الكمية: {q}" 
+        lines.append(f"- #{i} • {name} • السعر: {base}${qty_txt}")
+
+    buttons = []
+    # أزرار الخدمات (كل زر يفتح صفحة الخدمة)
+    for i, name in enumerate(view, start=start):
+        buttons.append([InlineKeyboardButton(f"⚙️ تعديل #{i}", callback_data=f"ap_sel_{i}")])
+
+    # تنقل
+    nav = []
+    if start > 0:
+        nav.append(InlineKeyboardButton("⬅️ السابق", callback_data=f"ap_page_{cat}_{max(0,page-1)}"))
+    if end < total:
+        nav.append(InlineKeyboardButton("التالي ➡️", callback_data=f"ap_page_{cat}_{page+1}"))
+    if nav:
+        buttons.append(nav)
+    buttons.append([InlineKeyboardButton("رجوع", callback_data="admin_edit_prices")])
+
+    try:
+        query.edit_message_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(buttons))
+    except Exception:
+        context.bot.send_message(chat_id=update.effective_chat.id, text="\n".join(lines), reply_markup=InlineKeyboardMarkup(buttons))
+
+def _ap_show_service_actions(update: Update, context: CallbackContext, query, idx: int):
+    items = context.user_data.get("ap_map") or []
+    if idx < 0 or idx >= len(items):
+        query.answer("خيار غير صالح.", show_alert=True); return
+    name = items[idx]
+
+    # نجعل تعديل الكمية متاحًا لجميع الخدمات (سواء لديها mapping أم لا)
+    btns = [[InlineKeyboardButton("💲 تعديل السعر", callback_data=f"ap_setprice_{idx}")]]
+    btns.append([InlineKeyboardButton("📦 تعديل الكمية", callback_data=f"ap_setqty_{idx}")])
+    btns.append([InlineKeyboardButton("❌ حذف تعديل السعر", callback_data=f"ap_delprice_{idx}")])
+    btns.append([InlineKeyboardButton("↩️ إعادة الكمية للافتراضي", callback_data=f"ap_delqty_{idx}")])
+    btns.append([InlineKeyboardButton("رجوع", callback_data=f"ap_page_{context.user_data.get('ap_cat','smm')}_{context.user_data.get('ap_page',0)}")])
+    query.edit_message_text(f"الخدمة:\n• {name}\nاختر الإجراء:", reply_markup=InlineKeyboardMarkup(btns))
+
 # ======= خدمات شراء رصيد الهاتف (قسم جديد) =======
 mobile_recharge_services = {
     "شراء رصيد 2دولار اثير": 2.0,
@@ -766,13 +916,14 @@ mobile_recharge_services = {
 def mobile_recharge_services_keyboard(user_id: int):
     buttons = []
     for service_name, base_price in mobile_recharge_services.items():
-        eff = get_effective_price(user_id, service_name, base_price, "mobile")
+        eff = get_display_price(user_id, service_name, base_price, "mobile")
         buttons.append([InlineKeyboardButton(f"{service_name} - {eff}$", callback_data=f"mobile_service_{service_name}")])
     buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
     return InlineKeyboardMarkup(buttons)
 
 def services_menu_keyboard():
     buttons = [
+        [InlineKeyboardButton("تعديل الأسعار والكميات", callback_data="admin_edit_prices")],
         [InlineKeyboardButton("قسم المتابعين", callback_data="show_followers")],
         [InlineKeyboardButton("قسم اللايكات", callback_data="show_likes")],
         [InlineKeyboardButton("قسم المشاهدات", callback_data="show_views")],
@@ -792,7 +943,7 @@ def tiktok_score_keyboard(user_id: int, context: CallbackContext):
     context.user_data["score_map"] = [name for name, _ in score_services]
     service_buttons = []
     for idx, (service_name, price) in enumerate(score_services):
-        eff = get_effective_price(user_id, service_name, price, "generic")
+        eff = get_display_price(user_id, service_name, price, "generic")
         service_buttons.append([InlineKeyboardButton(f"{service_name} - {eff}$", callback_data=f"score_service_{idx}")])
     service_buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
     return InlineKeyboardMarkup(service_buttons)
@@ -800,7 +951,7 @@ def tiktok_score_keyboard(user_id: int, context: CallbackContext):
 def itunes_services_keyboard(user_id: int):
     buttons = []
     for service_name, price in itunes_services.items():
-        eff = get_effective_price(user_id, service_name, price, "itunes")
+        eff = get_display_price(user_id, service_name, price, "itunes")
         buttons.append([InlineKeyboardButton(f"{service_name} - {eff}$", callback_data=f"itunes_service_{service_name}")])
     buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
     return InlineKeyboardMarkup(buttons)
@@ -808,7 +959,7 @@ def itunes_services_keyboard(user_id: int):
 def telegram_services_keyboard(user_id: int):
     buttons = []
     for service_name, price in telegram_services.items():
-        eff = get_effective_price(user_id, service_name, price, "telegram")
+        eff = get_display_price(user_id, service_name, price, "telegram")
         buttons.append([InlineKeyboardButton(f"{service_name} - {eff}$", callback_data=f"telegram_service_{service_name}")])
     buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
     return InlineKeyboardMarkup(buttons)
@@ -817,15 +968,14 @@ def telegram_services_keyboard(user_id: int):
 def ludo_services_keyboard(user_id: int):
     buttons = []
     for service_name, price in ludo_services.items():
-        eff = get_effective_price(user_id, service_name, price, "ludo")
+        eff = get_display_price(user_id, service_name, price, "ludo")
         buttons.append([InlineKeyboardButton(f"{service_name} - {eff}$", callback_data=f"ludo_service_{service_name}")])
     buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
     return InlineKeyboardMarkup(buttons)
 
 
 def clear_all_waiting_flags(context: CallbackContext):
-    waiting_keys = [
-        "waiting_for_card", "waiting_for_block", "waiting_for_add_balance_user_id",
+    waiting_keys = ["waiting_for_card", "waiting_for_block", "waiting_for_add_balance_user_id",
         "waiting_for_add_balance_amount", "waiting_for_discount_user_id", "waiting_for_discount_amount",
         "waiting_for_broadcast", "waiting_for_api_order_status", "selected_service", "service_price",
         "selected_pubg_service", "pubg_service_price", "selected_ludo_service", "ludo_service_price", "card_to_approve", "card_to_approve_id", "waiting_for_amount",
@@ -834,8 +984,7 @@ def clear_all_waiting_flags(context: CallbackContext):
         "selected_telegram_service", "telegram_service_price", "waiting_for_telegram_link",
         "waiting_for_new_mod", "waiting_for_remove_mod", "admin_target_id",
         "score_map",
-        "my_orders_offset", "waiting_for_bulk_service_code", "__target_services__", "__groups__"
-    ]
+        "my_orders_offset", "waiting_for_bulk_service_code", "__target_services__", "__groups__", "waiting_for_price_edit_service", "waiting_for_qty_edit_service", "ap_map", "ap_cat", "ap_page"]
     for key in waiting_keys:
         context.user_data.pop(key, None)
 
@@ -962,6 +1111,41 @@ def _parse_service_code_only(s: str):
     return m.group(0)
 
 def _admin_text_gate(update: Update, context: CallbackContext):
+
+    if context.user_data.get("waiting_for_price_edit_service"):
+        srv = context.user_data.get("waiting_for_price_edit_service")
+        try:
+            val = float((update.message.text or "").strip().replace(",", "."))
+            if val <= 0:
+                update.message.reply_text("السعر يجب أن يكون أكبر من 0. أرسل رقمًا صالحًا أو اضغط رجوع من لوحة الأسعار.")
+                return True
+            db_set_price_override(srv, val)
+            context.user_data.pop("waiting_for_price_edit_service", None)
+            update.message.reply_text(f"تم حفظ السعر الجديد لخدمة:\n• {srv}\nالسعر: {val}$",
+                                      reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_edit_prices")]]))
+        except Exception as e:
+            update.message.reply_text("تعذّر حفظ السعر. تأكد من إرسال رقم صحيح مثل 7.5")
+        return True
+
+    if context.user_data.get("waiting_for_qty_edit_service"):
+        srv = context.user_data.get("waiting_for_qty_edit_service")
+        txt = (update.message.text or "").strip()
+        if not txt.isdigit():
+            update.message.reply_text("أرسل رقمًا صحيحًا للكمية (عدد صحيح).")
+            return True
+        q = int(txt)
+        if q <= 0:
+            update.message.reply_text("الكمية يجب أن تكون رقمًا صحيحًا أكبر من صفر.")
+            return True
+        try:
+            db_set_quantity_only(srv, q)
+            context.user_data.pop("waiting_for_qty_edit_service", None)
+            update.message.reply_text(f"تم تحديث الكمية (quantity_multiplier) لخدمة:\n• {srv}\nالكمية: {q}",
+                                      reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_edit_prices")]]))
+        except Exception as e:
+            update.message.reply_text("تعذّر حفظ الكمية. حاول مرة أخرى.")
+        return True
+
     user_id = update.effective_user.id
     if user_id != ADMIN_ID: return False
     if context.user_data.get("waiting_for_bulk_service_code"):
@@ -1135,14 +1319,99 @@ def button_handler(update: Update, context: CallbackContext):
     user_id = query.from_user.id
     data = query.data
 
-
-    # --- Route to Price/Qty plugin if callback matches our namespace ---
-    try:
-        if data == 'admin_edit_prices' or data.startswith('ap_'):
-            price_qty_router(update, context)
+    # ======== محرر الأسعار والكميات (مالك) ========
+    if data == "admin_edit_prices":
+        if user_id != ADMIN_ID:
+            query.edit_message_text("عذراً، هذه الصفحة للمالك فقط.")
             return
-    except Exception:
-        pass
+        _ap_show_categories(query); return
+
+    if data.startswith("ap_page_"):
+        if user_id != ADMIN_ID: 
+            query.answer("غير مسموح.", show_alert=True); return
+        parts = data.split("_", 2)[2].split("_")
+        cat = parts[0]; page = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+        _ap_list_services(update, context, query, cat, page); return
+
+    if data.startswith("ap_cat_"):
+        if user_id != ADMIN_ID: 
+            query.answer("غير مسموح.", show_alert=True); return
+        cat = data.replace("ap_cat_", "")
+        _ap_list_services(update, context, query, cat, 0); return
+
+    if data.startswith("ap_sel_"):
+        if user_id != ADMIN_ID: 
+            query.answer("غير مسموح.", show_alert=True); return
+        try:
+            idx = int(data.replace("ap_sel_", ""))
+        except Exception:
+            query.answer("خيار غير صالح.", show_alert=True); return
+        _ap_show_service_actions(update, context, query, idx); return
+
+    if data.startswith("ap_setprice_"):
+        if user_id != ADMIN_ID: 
+            query.answer("غير مسموح.", show_alert=True); return
+
+    if data.startswith("ap_setqty_"):
+        if user_id != ADMIN_ID: 
+            query.answer("غير مسموح.", show_alert=True); return
+        idx = int(data.replace("ap_setqty_", ""))
+        items = context.user_data.get("ap_map") or []
+        if idx < 0 or idx >= len(items):
+            query.answer("خيار غير صالح.", show_alert=True); return
+        srv = items[idx]
+        # السماح بتعديل الكمية لكل الخدمات
+        context.user_data["waiting_for_qty_edit_service"] = srv
+        query.edit_message_text(f"أرسل الكمية الجديدة (عدد صحيح) لخدمة:\n• {srv}\nمثال: 5000",
+                                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data=f"ap_sel_{idx}")]]))
+        return
+        idx = int(data.replace("ap_setprice_", ""))
+        items = context.user_data.get("ap_map") or []
+        if idx < 0 or idx >= len(items):
+            query.answer("خيار غير صالح.", show_alert=True); return
+        srv = items[idx]
+        context.user_data["waiting_for_price_edit_service"] = srv
+        query.edit_message_text(f"أرسل السعر الجديد بالدولار لخدمة:\n• {srv}\nمثال: 7.5",
+                                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data=f"ap_sel_{idx}")]]))
+        return
+
+    if data.startswith("ap_delprice_"):
+        if user_id != ADMIN_ID: 
+            query.answer("غير مسموح.", show_alert=True); return
+        idx = int(data.replace("ap_delprice_", ""))
+        items = context.user_data.get("ap_map") or []
+        if idx < 0 or idx >= len(items):
+            query.answer("خيار غير صالح.", show_alert=True); return
+        srv = items[idx]
+        db_delete_price_override(srv)
+        query.edit_message_text(f"تم حذف تعديل السعر والعودة للسعر الافتراضي.\n• {srv}",
+                                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data=f"ap_sel_{idx}")]]))
+        return
+
+    if data.startswith("ap_delqty_"):
+        if user_id != ADMIN_ID: 
+            query.answer("غير مسموح.", show_alert=True); return
+        idx = int(data.replace("ap_delqty_", ""))
+        items = context.user_data.get("ap_map") or []
+        if idx < 0 or idx >= len(items):
+            query.answer("خيار غير صالح.", show_alert=True); return
+        srv = items[idx]
+        # إعادة الكمية للافتراصي:
+        try:
+            base = service_api_mapping.get(srv)
+            if base:
+                base_q = int(base.get("quantity_multiplier", 1000))
+                db_set_quantity_only(srv, base_q)
+            else:
+                # إن لم تكن الخدمة في mapping نحذف السجل لإزالة أي كمية مخصّصة
+                db_delete_service_override(srv)
+        except Exception:
+            pass
+        query.edit_message_text(f"تمت إعادة الكمية للافتراصي.\n• {srv}",
+                                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data=f"ap_sel_{idx}")]]))
+        return
+
+
     # شرح الخصومات للمشرفين
     if data == "mod_discount_info" and is_moderator(user_id):
         try:
@@ -1222,7 +1491,7 @@ def button_handler(update: Update, context: CallbackContext):
         followers_services = {k: v for k, v in services_dict.items() if "متابعين" in k}
         service_buttons = []
         for name, price in followers_services.items():
-            eff = get_effective_price(user_id, name, price, "generic")
+            eff = get_display_price(user_id, name, price, "generic")
             service_buttons.append([InlineKeyboardButton(f"{name} - {eff}$", callback_data=f"service_{name}")])
         service_buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
         query.edit_message_text("اختر الخدمة المطلوبة:", reply_markup=InlineKeyboardMarkup(service_buttons))
@@ -1232,7 +1501,7 @@ def button_handler(update: Update, context: CallbackContext):
         likes_services = {k: v for k, v in services_dict.items() if "لايكات" in k}
         service_buttons = []
         for name, price in likes_services.items():
-            eff = get_effective_price(user_id, name, price, "generic")
+            eff = get_display_price(user_id, name, price, "generic")
             service_buttons.append([InlineKeyboardButton(f"{name} - {eff}$", callback_data=f"service_{name}")])
         service_buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
         query.edit_message_text("اختر الخدمة المطلوبة:", reply_markup=InlineKeyboardMarkup(service_buttons))
@@ -1242,7 +1511,7 @@ def button_handler(update: Update, context: CallbackContext):
         views_services = {k: v for k, v in services_dict.items() if ("مشاهدات تيكتوك" in k or "مشاهدات انستغرام" in k)}
         service_buttons = []
         for name, price in views_services.items():
-            eff = get_effective_price(user_id, name, price, "generic")
+            eff = get_display_price(user_id, name, price, "generic")
             service_buttons.append([InlineKeyboardButton(f"{name} - {eff}$", callback_data=f"service_{name}")])
         service_buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
         query.edit_message_text("اختر الخدمة المطلوبة:", reply_markup=InlineKeyboardMarkup(service_buttons))
@@ -1252,7 +1521,7 @@ def button_handler(update: Update, context: CallbackContext):
         live_views_services = {k: v for k, v in services_dict.items() if "مشاهدات بث" in k}
         service_buttons = []
         for name, price in live_views_services.items():
-            eff = get_effective_price(user_id, name, price, "generic")
+            eff = get_display_price(user_id, name, price, "generic")
             service_buttons.append([InlineKeyboardButton(f"{name} - {eff}$", callback_data=f"service_{name}")])
         service_buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
         query.edit_message_text("اختر الخدمة المطلوبة:", reply_markup=InlineKeyboardMarkup(service_buttons))
@@ -1274,13 +1543,15 @@ def button_handler(update: Update, context: CallbackContext):
             return
         service_name = names[idx]
         base_price = services_dict.get(service_name)
-        if base_price is None:
+        base_price = get_base_price(service_name, base_price if base_price is not None else 0.0)
+        if services_dict.get(service_name) is None:
             query.edit_message_text("الخدمة غير موجودة.")
             return
         price = get_effective_price(user_id, service_name, base_price, "generic")
         current_balance = users_balance.get(user_id, 0.0)
         if current_balance < price:
             buttons = [
+        [InlineKeyboardButton("تعديل الأسعار والكميات", callback_data="admin_edit_prices")],
                 [InlineKeyboardButton("شحن عبر اسياسيل", callback_data="charge_asiacell")],
                 [InlineKeyboardButton("شحن عبر سوبركي", callback_data="charge_superkey")],
                 [InlineKeyboardButton("شحن عبر زين كاش", callback_data="charge_zaincash")],
@@ -1322,13 +1593,15 @@ def button_handler(update: Update, context: CallbackContext):
     if data.startswith("service_"):
         service_name = data[len("service_"):]
         base_price = services_dict.get(service_name)
-        if base_price is None:
+        base_price = get_base_price(service_name, base_price if base_price is not None else 0.0)
+        if services_dict.get(service_name) is None:
             query.edit_message_text("الخدمة غير موجودة.")
             return
         price = get_effective_price(user_id, service_name, base_price, "generic")
         current_balance = users_balance.get(user_id, 0.0)
         if current_balance < price:
             buttons = [
+        [InlineKeyboardButton("تعديل الأسعار والكميات", callback_data="admin_edit_prices")],
                 [InlineKeyboardButton("شحن عبر اسياسيل", callback_data="charge_asiacell")],
                 [InlineKeyboardButton("شحن عبر سوبركي", callback_data="charge_superkey")],
                 [InlineKeyboardButton("شحن عبر زين كاش", callback_data="charge_zaincash")],
@@ -1368,10 +1641,12 @@ def button_handler(update: Update, context: CallbackContext):
     if data.startswith("ludo_service_"):
         service_name = data[len("ludo_service_"):]
         base_price = ludo_services.get(service_name, 0)
+        base_price = get_base_price(service_name, base_price)
         price = get_effective_price(user_id, service_name, base_price, "ludo")
         current_balance = users_balance.get(user_id, 0.0)
         if current_balance < price:
             buttons = [
+        [InlineKeyboardButton("تعديل الأسعار والكميات", callback_data="admin_edit_prices")],
                 [InlineKeyboardButton("شحن عبر اسياسيل", callback_data="charge_asiacell")],
                 [InlineKeyboardButton("شحن عبر سوبركي", callback_data="charge_superkey")],
                 [InlineKeyboardButton("شحن عبر زين كاش", callback_data="charge_zaincash")],
@@ -1390,10 +1665,12 @@ def button_handler(update: Update, context: CallbackContext):
     if data.startswith("pubg_service_"):
         name = data[len("pubg_service_"):]
         base_price = pubg_services.get(name, 0)
+        base_price = get_base_price(name, base_price)
         price = get_effective_price(user_id, name, base_price, "pubg")
         current_balance = users_balance.get(user_id, 0.0)
         if current_balance < price:
             buttons = [
+        [InlineKeyboardButton("تعديل الأسعار والكميات", callback_data="admin_edit_prices")],
                 [InlineKeyboardButton("شحن عبر اسياسيل", callback_data="charge_asiacell")],
                 [InlineKeyboardButton("شحن عبر سوبركي", callback_data="charge_superkey")],
                 [InlineKeyboardButton("شحن عبر زين كاش", callback_data="charge_zaincash")],
@@ -1417,6 +1694,7 @@ def button_handler(update: Update, context: CallbackContext):
         current_balance = users_balance.get(user_id, 0.0)
         if current_balance < price:
             buttons = [
+        [InlineKeyboardButton("تعديل الأسعار والكميات", callback_data="admin_edit_prices")],
                 [InlineKeyboardButton("شحن عبر اسياسيل", callback_data="charge_asiacell")],
                 [InlineKeyboardButton("شحن عبر سوبركي", callback_data="charge_superkey")],
                 [InlineKeyboardButton("شحن عبر زين كاش", callback_data="charge_zaincash")],
@@ -1441,6 +1719,7 @@ def button_handler(update: Update, context: CallbackContext):
         current_balance = users_balance.get(user_id, 0.0)
         if current_balance < price:
             buttons = [
+        [InlineKeyboardButton("تعديل الأسعار والكميات", callback_data="admin_edit_prices")],
                 [InlineKeyboardButton("شحن عبر اسياسيل", callback_data="charge_asiacell")],
                 [InlineKeyboardButton("شحن عبر سوبركي", callback_data="charge_superkey")],
                 [InlineKeyboardButton("شحن عبر زين كاش", callback_data="charge_zaincash")],
@@ -1469,6 +1748,7 @@ def button_handler(update: Update, context: CallbackContext):
     if data == "show_balance":
         balance = users_balance.get(user_id, 0.0)
         buttons = [
+        [InlineKeyboardButton("تعديل الأسعار والكميات", callback_data="admin_edit_prices")],
             [InlineKeyboardButton("شحن عبر اسياسيل", callback_data="charge_asiacell")],
             [InlineKeyboardButton("شحن عبر سوبركي", callback_data="charge_superkey")],
             [InlineKeyboardButton("شحن عبر زين كاش", callback_data="charge_zaincash")],
@@ -2650,11 +2930,13 @@ def mobile_button_handler(update: Update, context: CallbackContext):
     if data.startswith("mobile_service_"):
         service_name = data[len("mobile_service_"):]
         base_price = mobile_recharge_services.get(service_name, 0.0)
+        base_price = get_base_price(service_name, base_price)
         price = get_effective_price(user_id, service_name, base_price, "mobile")
         current_balance = users_balance.get(user_id, 0.0)
         if current_balance < price:
             try:
                 buttons = [
+        [InlineKeyboardButton("تعديل الأسعار والكميات", callback_data="admin_edit_prices")],
                     [InlineKeyboardButton("شحن عبر اسياسيل", callback_data="charge_asiacell")],
                     [InlineKeyboardButton("شحن عبر سوبركي", callback_data="charge_superkey")],
                     [InlineKeyboardButton("شحن عبر زين كاش", callback_data="charge_zaincash")],
@@ -2783,374 +3065,3 @@ def get_effective_price(user_id: int, service_name: str, base_price: float, kind
     except Exception as e:
         logger.error("get_effective_price error: %s", e)
         return float(base_price)
-
-
-
-# ===============================================================
-#         Price & Quantity Admin Plugin (Safe Add-on) v2
-# ===============================================================
-
-# --- Imports (compatible) ---
-try:
-    from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-    from telegram.ext import CommandHandler, CallbackQueryHandler, MessageHandler
-    try:
-        # PTB v20+
-        from telegram.ext import filters as _filters
-        _FILTER_TEXT = _filters.TEXT & ~_filters.COMMAND
-    except Exception:
-        # PTB v13
-        from telegram.ext import Filters as _filters_old
-        _FILTER_TEXT = _filters_old.text & ~_filters_old.command
-except Exception:
-    pass
-
-# --- DB: price overrides ---
-try:
-    _exec("""CREATE TABLE IF NOT EXISTS service_price_overrides (
-        service_name TEXT PRIMARY KEY,
-        price REAL
-    )""")
-except Exception:
-    pass
-
-def db_get_price_override(service_name: str):
-    try:
-        row = _exec("SELECT price FROM service_price_overrides WHERE service_name=%s", (service_name,), "one")
-        return None if not row else float(row[0])
-    except Exception:
-        return None
-
-def db_set_price_override(service_name: str, price: float):
-    try:
-        _exec("""INSERT INTO service_price_overrides (service_name, price)
-                 VALUES (%s,%s)
-                 ON CONFLICT(service_name) DO UPDATE SET price=EXCLUDED.price""",
-              (service_name, float(price)))
-        return True
-    except Exception:
-        return False
-
-def db_delete_price_override(service_name: str):
-    try:
-        _exec("DELETE FROM service_price_overrides WHERE service_name=%s", (service_name,))
-        return True
-    except Exception:
-        return False
-
-# --- DB: visible qty overrides ---
-try:
-    _exec("""CREATE TABLE IF NOT EXISTS service_qty_overrides (
-        service_name TEXT PRIMARY KEY,
-        display_qty INTEGER
-    )""")
-except Exception:
-    pass
-
-def db_get_qty_display_override(service_name: str):
-    try:
-        row = _exec("SELECT display_qty FROM service_qty_overrides WHERE service_name=%s", (service_name,), "one")
-        return None if not row else int(row[0])
-    except Exception:
-        return None
-
-def db_set_qty_display_override(service_name: str, qty: int):
-    try:
-        _exec("""INSERT INTO service_qty_overrides (service_name, display_qty)
-                 VALUES (%s,%s)
-                 ON CONFLICT(service_name) DO UPDATE SET display_qty=EXCLUDED.display_qty""",
-              (service_name, int(qty)))
-        return True
-    except Exception:
-        return False
-
-def db_delete_qty_display_override(service_name: str):
-    try:
-        _exec("DELETE FROM service_qty_overrides WHERE service_name=%s", (service_name,))
-        return True
-    except Exception:
-        return False
-
-# --- Helpers ---
-def get_api_params(service_name: str):
-    ov = db_get_service_override(service_name) if 'db_get_service_override' in globals() else None
-    ov = ov or {}
-    base = (service_api_mapping.get(service_name) or {}) if 'service_api_mapping' in globals() else {}
-    sid = ov.get("service_id") or base.get("service_id")
-    qty = ov.get("quantity_multiplier") or base.get("quantity_multiplier") or 1000
-    try: qty = int(qty)
-    except: qty = 1000
-    return (str(sid) if sid is not None else "", qty)
-
-def get_visible_quantity(service_name: str):
-    dq = db_get_qty_display_override(service_name)
-    if dq is not None:
-        return int(dq)
-    return get_api_params(service_name)[1]
-
-def get_base_price(service_name: str, default_price: float) -> float:
-    p = db_get_price_override(service_name)
-    try:
-        return float(p) if p is not None else float(default_price)
-    except:
-        return float(default_price or 0.0)
-
-def get_display_price(user_id: int, service_name: str, default_price: float, kind: str="generic") -> float:
-    base = get_base_price(service_name, default_price)
-    if 'get_effective_price' in globals():
-        try: return get_effective_price(user_id, service_name, base, kind)
-        except Exception: return base
-    return base
-
-# --- Dynamic wrapper for mapping ---
-try:
-    class _DynamicAPIMapping(dict):
-        def get(self, name, default=None):
-            base = dict(super().get(name, {}) or {})
-            ov = db_get_service_override(name) if 'db_get_service_override' in globals() else None
-            ov = ov or {}
-            if ov.get("service_id"): base["service_id"] = ov["service_id"]
-            if ov.get("quantity_multiplier"): base["quantity_multiplier"] = ov["quantity_multiplier"]
-            return base or (default if default is not None else {})
-    if 'service_api_mapping' in globals():
-        service_api_mapping = _DynamicAPIMapping(service_api_mapping)
-except Exception:
-    pass
-
-# ---------------- UI ----------------
-def _ap_build_catalog():
-    catalog = {}
-    if 'services_dict' in globals(): catalog["smm"] = list(services_dict.keys())
-    if 'pubg_services' in globals(): catalog["pubg"] = list(pubg_services.keys())
-    if 'itunes_services' in globals(): catalog["itunes"] = list(itunes_services.keys())
-    if 'telegram_services' in globals(): catalog["telegram"] = list(telegram_services.keys())
-    if 'mobile_recharge_services' in globals(): catalog["mobile"] = list(mobile_recharge_services.keys())
-    if 'ludo_services' in globals(): catalog["ludo"] = list(ludo_services.keys())
-    return catalog
-
-def _ap_show_categories(update, context):
-    q = update.callback_query
-    cats = _ap_build_catalog()
-    kb = []
-    if "smm" in cats: kb.append([InlineKeyboardButton("سوشيال (SMM)", callback_data="ap_cat_smm")])
-    if "pubg" in cats: kb.append([InlineKeyboardButton("PUBG", callback_data="ap_cat_pubg")])
-    if "itunes" in cats: kb.append([InlineKeyboardButton("iTunes", callback_data="ap_cat_itunes")])
-    if "telegram" in cats: kb.append([InlineKeyboardButton("Telegram", callback_data="ap_cat_telegram")])
-    if "mobile" in cats: kb.append([InlineKeyboardButton("Mobile رصيد", callback_data="ap_cat_mobile")])
-    if "ludo" in cats: kb.append([InlineKeyboardButton("Ludo", callback_data="ap_cat_ludo")])
-    kb.append([InlineKeyboardButton("رجوع", callback_data="admin_menu")])
-    q.edit_message_text("اختر القسم الذي تريد تعديل أسعاره/كمياته:", reply_markup=InlineKeyboardMarkup(kb))
-
-def _ap_list_services(update, context, cat, page=0, page_size=10):
-    q = update.callback_query
-    catalog = _ap_build_catalog()
-    items = catalog.get(cat, [])
-    total = len(items)
-    start = page * page_size
-    end = min(total, start + page_size)
-    if start >= total and total > 0:
-        page = 0; start = 0; end = min(total, page_size)
-    view = items[start:end]
-
-    context.user_data["ap_map"] = items
-    context.user_data["ap_cat"] = cat
-    context.user_data["ap_page"] = page
-
-    lines = [f"القسم: {cat} — الصفحة {page+1}/{(total-1)//page_size+1 if total else 1}", ""]
-    for i, name in enumerate(view, start=start):
-        default_price = 0
-        if cat=="smm" and 'services_dict' in globals(): default_price = (services_dict.get(name) or 0)
-        if cat=="pubg" and 'pubg_services' in globals(): default_price = (pubg_services.get(name) or 0)
-        if cat=="itunes" and 'itunes_services' in globals(): default_price = (itunes_services.get(name) or 0)
-        if cat=="telegram" and 'telegram_services' in globals(): default_price = (telegram_services.get(name) or 0)
-        if cat=="mobile" and 'mobile_recharge_services' in globals(): default_price = (mobile_recharge_services.get(name) or 0)
-        if cat=="ludo" and 'ludo_services' in globals(): default_price = (ludo_services.get(name) or 0)
-
-        price_now = get_base_price(name, default_price)
-        qty_now = get_visible_quantity(name)
-        lines.append(f"- #{i} • {name} • السعر: {price_now}$ | الكمية: {qty_now}")
-
-    buttons = []
-    for i, name in enumerate(view, start=start):
-        buttons.append([InlineKeyboardButton(f"⚙️ تعديل #{i}", callback_data=f"ap_sel_{i}")])
-
-    nav = []
-    if start > 0: nav.append(InlineKeyboardButton("⬅️ السابق", callback_data=f"ap_page_{cat}_{max(0,page-1)}"))
-    if end < total: nav.append(InlineKeyboardButton("التالي ➡️", callback_data=f"ap_page_{cat}_{page+1}"))
-    if nav: buttons.append(nav)
-    buttons.append([InlineKeyboardButton("رجوع", callback_data="admin_edit_prices")])
-
-    try:
-        q.edit_message_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(buttons))
-    except Exception:
-        context.bot.send_message(chat_id=update.effective_chat.id, text="\n".join(lines), reply_markup=InlineKeyboardMarkup(buttons))
-
-def _ap_show_service_actions(update, context, idx):
-    items = context.user_data.get("ap_map") or []
-    q = update.callback_query
-    if idx < 0 or idx >= len(items):
-        q.answer("خيار غير صالح.", show_alert=True); return
-    name = items[idx]
-    has_qty = ('service_api_mapping' in globals()) and (name in service_api_mapping)
-
-    btns = [[InlineKeyboardButton("💲 تعديل السعر", callback_data=f"ap_setprice_{idx}")]]
-    if has_qty: btns.append([InlineKeyboardButton("📦 تعديل الكمية", callback_data=f"ap_setqty_{idx}")])
-    btns.append([InlineKeyboardButton("❌ حذف تعديل السعر", callback_data=f"ap_delprice_{idx}")])
-    if has_qty: btns.append([InlineKeyboardButton("↩️ إعادة الكمية للافتراضي", callback_data=f"ap_delqty_{idx}")])
-    btns.append([InlineKeyboardButton("رجوع", callback_data=f"ap_page_{context.user_data.get('ap_cat','smm')}_{context.user_data.get('ap_page',0)}")])
-    q.edit_message_text(f"الخدمة:\n• {name}\nاختر الإجراء:", reply_markup=InlineKeyboardMarkup(btns))
-
-def prices_qty_text_gate(update, context):
-    user_id = update.effective_user.id
-    if 'ADMIN_ID' in globals() and user_id != ADMIN_ID:
-        return
-    if context.user_data.get("waiting_for_price_edit_service"):
-        srv = context.user_data.get("waiting_for_price_edit_service")
-        try:
-            val = float((update.message.text or "").strip().replace(",", "."))
-            if val <= 0: raise ValueError
-            db_set_price_override(srv, val)
-            context.user_data.pop("waiting_for_price_edit_service", None)
-            update.message.reply_text(f"تم حفظ السعر الجديد لخدمة:\n• {srv}\nالسعر: {val}$",
-                                      reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_edit_prices")]]))
-        except Exception:
-            update.message.reply_text("تعذّر حفظ السعر. أرسل رقمًا صحيحًا مثل 7.5")
-        return
-
-    if context.user_data.get("waiting_for_qty_edit_service"):
-        srv = context.user_data.get("waiting_for_qty_edit_service")
-        txt = (update.message.text or "").strip()
-        if not txt.isdigit():
-            update.message.reply_text("أرسل رقمًا صحيحًا للكمية (عدد صحيح)."); return
-        q = int(txt)
-        if q <= 0:
-            update.message.reply_text("الكمية يجب أن تكون أكبر من صفر."); return
-
-        if ('service_api_mapping' in globals()) and (srv in service_api_mapping) and ('db_set_service_override' in globals()):
-            try:
-                ov = db_get_service_override(srv) or {}
-                sid = ov.get("service_id") or (service_api_mapping.get(srv) or {}).get("service_id")
-                if sid is None: sid = (service_api_mapping.get(srv) or {}).get("service_id")
-                if sid is not None:
-                    db_set_service_override(srv, sid, int(q))
-            except Exception:
-                pass
-        db_set_qty_display_override(srv, q)
-        context.user_data.pop("waiting_for_qty_edit_service", None)
-        update.message.reply_text(f"تم تحديث الكمية لخدمة:\n• {srv}\nالكمية: {q}",
-                                  reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_edit_prices")]]))
-        return
-
-def price_qty_router(update, context):
-    q = update.callback_query
-    data = q.data
-    user_id = update.effective_user.id
-    if 'ADMIN_ID' in globals() and user_id != ADMIN_ID:
-        q.answer("غير مسموح.", show_alert=True); return
-
-    if data == "admin_edit_prices":
-        _ap_show_categories(update, context); return
-    if data.startswith("ap_cat_"):
-        _ap_list_services(update, context, data.replace("ap_cat_", ""), 0); return
-    if data.startswith("ap_page_"):
-        parts = data.split("_", 3)
-        cat = parts[2]; page = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 0
-        _ap_list_services(update, context, cat, page); return
-    if data.startswith("ap_sel_"):
-        idx = int(data.replace("ap_sel_", "")) if data.replace("ap_sel_", "").isdigit() else -1
-        _ap_show_service_actions(update, context, idx); return
-    if data.startswith("ap_setprice_"):
-        idx = int(data.replace("ap_setprice_", "")) if data.replace("ap_setprice_", "").isdigit() else -1
-        items = context.user_data.get("ap_map") or []
-        if 0 <= idx < len(items):
-            srv = items[idx]
-            context.user_data["waiting_for_price_edit_service"] = srv
-            q.edit_message_text(f"أرسل السعر الجديد بالدولار لخدمة:\n• {srv}\nمثال: 7.5",
-                                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data=f"ap_sel_{idx}")]]))
-        else:
-            q.answer("خيار غير صالح.", show_alert=True)
-        return
-    if data.startswith("ap_setqty_"):
-        idx = int(data.replace("ap_setqty_", "")) if data.replace("ap_setqty_", "").isdigit() else -1
-        items = context.user_data.get("ap_map") or []
-        if 0 <= idx < len(items):
-            srv = items[idx]
-            context.user_data["waiting_for_qty_edit_service"] = srv
-            q.edit_message_text(f"أرسل الكمية الجديدة (عدد صحيح) لخدمة:\n• {srv}\nمثال: 5000",
-                                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data=f"ap_sel_{idx}")]]))
-        else:
-            q.answer("خيار غير صالح.", show_alert=True)
-        return
-    if data.startswith("ap_delprice_"):
-        idx = int(data.replace("ap_delprice_", "")) if data.replace("ap_delprice_", "").isdigit() else -1
-        items = context.user_data.get("ap_map") or []
-        if 0 <= idx < len(items):
-            srv = items[idx]
-            db_delete_price_override(srv)
-            q.edit_message_text(f"تم حذف تعديل السعر والعودة للسعر الافتراضي.\n• {srv}",
-                                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data=f"ap_sel_{idx}")]]))
-        else:
-            q.answer("خيار غير صالح.", show_alert=True)
-        return
-    if data.startswith("ap_delqty_"):
-        idx = int(data.replace("ap_delqty_", "")) if data.replace("ap_delqty_", "").isdigit() else -1
-        items = context.user_data.get("ap_map") or []
-        if 0 <= idx < len(items):
-            srv = items[idx]
-            try:
-                base_q = (service_api_mapping.get(srv) or {}).get("quantity_multiplier", 1000) if 'service_api_mapping' in globals() else 1000
-                if 'db_set_service_override' in globals():
-                    ov = db_get_service_override(srv) or {}
-                    sid = ov.get("service_id") or (service_api_mapping.get(srv) or {}).get("service_id")
-                    if sid is not None:
-                        db_set_service_override(srv, sid, int(base_q))
-                db_delete_qty_display_override(srv)
-            except Exception:
-                pass
-            q.edit_message_text(f"تمت إعادة الكمية للافتراضي.\n• {srv}",
-                                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data=f"ap_sel_{idx}")]]))
-        else:
-            q.answer("خيار غير صالح.", show_alert=True)
-        return
-
-def prices_admin_entry(update, context):
-    if 'ADMIN_ID' in globals() and update.effective_user.id != ADMIN_ID:
-        update.message.reply_text("هذه الصفحة للمالك فقط."); return
-    kb = [[InlineKeyboardButton("تعديل الأسعار والكميات", callback_data="admin_edit_prices")]]
-    update.message.reply_text("لوحة المالك - محرر الأسعار والكميات", reply_markup=InlineKeyboardMarkup(kb))
-
-def _prices_admin_autoregister_v2():
-    try:
-        h_cmd = CommandHandler("prices_admin", prices_admin_entry)
-        h_cb  = CallbackQueryHandler(price_qty_router, pattern=r"^(admin_edit_prices|ap_(cat|page|sel|setprice|setqty|delprice|delqty)_.*)$")
-        h_txt = MessageHandler(_FILTER_TEXT, prices_qty_text_gate)
-
-        registered = False
-        # PTB v20+ style
-        if 'application' in globals() and application:
-            try:
-                application.add_handler(h_cmd, group=0)
-                application.add_handler(h_cb, group=0)
-                application.add_handler(h_txt, group=0)
-                registered = True
-            except Exception:
-                pass
-        # PTB v13 style
-        if not registered and 'dispatcher' in globals() and dispatcher:
-            dispatcher.add_handler(h_cmd, group=0)
-            dispatcher.add_handler(h_cb, group=0)
-            dispatcher.add_handler(h_txt, group=0)
-            registered = True
-        if not registered and 'updater' in globals() and updater:
-            try:
-                updater.dispatcher.add_handler(h_cmd, group=0)
-                updater.dispatcher.add_handler(h_cb, group=0)
-                updater.dispatcher.add_handler(h_txt, group=0)
-                registered = True
-            except Exception:
-                pass
-    except Exception:
-        pass
-
-_prices_admin_autoregister_v2()
-# ========================== End of Plugin v2 ==========================
