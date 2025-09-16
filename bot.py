@@ -1104,6 +1104,33 @@ def button_handler(update: Update, context: CallbackContext):
     user_id = query.from_user.id
     data = query.data
 
+    # Unified announce entry
+    if data == "admin_announce_unified":
+        if _is_owner_or_admin(user_id):
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("إعلان للخاص", callback_data="ann_choose_users"),
+                 InlineKeyboardButton("إعلان للقنوات/الكروبات", callback_data="ann_choose_chats")],
+                [InlineKeyboardButton("إعلان للكل", callback_data="ann_choose_all")],
+                [InlineKeyboardButton("رجوع", callback_data="admin_menu")]
+            ])
+            query.answer()
+            query.edit_message_text("اختر نوع البث للإعلان:", reply_markup=kb)
+        else:
+            query.answer("هذه الميزة للمالك فقط.", show_alert=True)
+        return
+
+    if data in ("ann_choose_users", "ann_choose_chats", "ann_choose_all"):
+        if _is_owner_or_admin(user_id):
+            scope = {"ann_choose_users":"users","ann_choose_chats":"chats","ann_choose_all":"all"}[data]
+            context.user_data["waiting_for_broadcast_unified"] = True
+            context.user_data["broadcast_scope"] = scope
+            query.answer()
+            query.edit_message_text(f"أرسل الآن نص/صورة/فيديو/صوت وسيتم بثّه إلى: { 'الخاص' if scope=='users' else ('القنوات/الكروبات' if scope=='chats' else 'الكل') }")
+        else:
+            query.answer("هذه الميزة للمالك فقط.", show_alert=True)
+        return
+
+
 
     # شرح الخصومات للمشرفين
     if data == "mod_discount_info" and is_moderator(user_id):
