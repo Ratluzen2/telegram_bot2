@@ -364,6 +364,10 @@ _exec("CREATE INDEX IF NOT EXISTS idx_orders_status_cat ON orders(status, catego
 # === أكواد الخدمات (Overrides) + نظام الإحالة ===
 # جدول overrides لتعيين service_id/quantity_multiplier مخصص لكل خدمة
 _exec("""CREATE TABLE IF NOT EXISTS service_api_overrides (
+    service_name TEXT PRIMARY KEY,
+    service_id TEXT,
+    quantity_multiplier INTEGER
+)""")
 
 # === أسعار الخدمات (Overrides) ===
 _exec("""CREATE TABLE IF NOT EXISTS service_price_overrides (
@@ -384,10 +388,6 @@ def db_set_price_override(service_name: str, price: float):
 def db_delete_price_override(service_name: str):
     _exec("DELETE FROM service_price_overrides WHERE service_name=%s", (service_name,))
 
-    service_name TEXT PRIMARY KEY,
-    service_id   TEXT,
-    quantity_multiplier INTEGER
-)""")
 
 def db_get_service_override(service_name: str):
     row = _exec("SELECT service_id, quantity_multiplier FROM service_api_overrides WHERE service_name=%s",
