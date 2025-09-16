@@ -34,8 +34,15 @@ from telegram.ext import (
     Filters,
     CallbackContext
 
-    ChatMemberHandler,)
+    )
 
+
+
+# استيراد آمن لـ ChatMemberHandler لتجنب أخطاء النسخ/القوس
+try:
+    from telegram.ext import ChatMemberHandler
+except Exception:
+    ChatMemberHandler = None  # سنتعامل مع غيابه عند التسجيل
 # =========================
 # إعدادات السجل (logging)
 # =========================
@@ -2812,7 +2819,7 @@ def on_admin_send_broadcast(update, context):
 def register_broadcast_feature(dispatcher):
     _ensure_chats_table()
     # تتبع العضوية والصلاحيات
-    dispatcher.add_handler(ChatMemberHandler(on_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
+    ChatMemberHandler and dispatcher.add_handler(ChatMemberHandler(on_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
     # تتبع أي رسالة (يسجّل المجموعات/القنوات عند أول نشاط يراه)
     dispatcher.add_handler(MessageHandler(Filters.all, track_any_chat), group=1)
     # زر المالك + أمر بديل
