@@ -733,14 +733,14 @@ def admin_menu_keyboard():
         [InlineKeyboardButton("عدد المستخدمين", callback_data="admin_users_count"), InlineKeyboardButton("رصيد المستخدمين", callback_data="admin_users_balance")],
         [InlineKeyboardButton("إدارة المشرفين", callback_data="manage_mods")],
         [InlineKeyboardButton("حضر المستخدم", callback_data="block_user"), InlineKeyboardButton("الغاء حظر المستخدم", callback_data="unblock_user")],
-        [InlineKeyboardButton("اعلان البوت", callback_data="admin_announce")],
+        [InlineKeyboardButton("الاعلان", callback_data="admin_announce_unified")],
+        [InlineKeyboardButton("تعديل الأسعار والكميات", callback_data="edit_prices_qty")],
         [InlineKeyboardButton("أكواد خدمات API", callback_data="admin_service_codes")],
-        [InlineKeyboardButton("نظام الإحالة", callback_data="admin_referrals")]
+        [InlineKeyboardButton("نظام الإحالة", callback_data="admin_referrals")],
+        [InlineKeyboardButton("شرح الخصومات", callback_data="admin_discounts_info")],
+        [InlineKeyboardButton("المتصدرين🎉", callback_data="show_leaderboard")]
     ]
-    buttons.append([InlineKeyboardButton("شرح الخصومات", callback_data="admin_discounts_info")])
-    buttons.append([InlineKeyboardButton("المتصدرين🎉", callback_data="show_leaderboard")])
     return InlineKeyboardMarkup(buttons)
-
 def services_menu_keyboard():
     buttons = [
         [InlineKeyboardButton("قسم المتابعين", callback_data="show_followers")],
@@ -2646,24 +2646,45 @@ def _hook_record_chat_from_update(update: Update):
 # [ADDON] سعر الخدمة الأساسي (أولوية DB ثم القواميس الحالية)
 # =========================
 def get_base_price(service_name: str) -> float:
-    ov = None
+    # 1) DB override
     try:
         ov = db_get_price_override(service_name)
     except Exception:
         ov = None
     if ov is not None:
         return float(ov)
-    if service_name in services_dict:
-        return float(services_dict[service_name])
-    if 'itunes_services' in globals() and service_name in itunes_services:
-        return float(itunes_services[service_name])
-    if 'pubg_services' in globals() and service_name in pubg_services:
-        return float(pubg_services[service_name])
-    if 'telegram_services' in globals() and service_name in telegram_services:
-        return float(telegram_services[service_name])
-    if 'ludo_services' in globals() and service_name in ludo_services:
-        return float(ludo_services[service_name])
-    # افتراضي
+
+    # 2) Known dicts
+    candidates = []
+    for name in [
+        'services_dict','itunes_services','pubg_services','telegram_services','ludo_services',
+        'mobile_topup_services','topup_services','recharge_services','phone_balance_services','telecom_services'
+    ]:
+        if name in globals() and isinstance(globals()[name], dict):
+            candidates.append(globals()[name])
+
+    # 2.a) Any other *_services dicts
+    for k,v in list(globals().items()):
+        if isinstance(v, dict) and k.endswith('_services') and v not in candidates:
+            candidates.append(v)
+
+    for d in candidates:
+        if service_name in d:
+            try:
+                return float(d[service_name])
+            except Exception:
+                continue
+
+    # 3) service_api_mapping may have a default_price field
+    try:
+        if 'service_api_mapping' in globals() and service_name in service_api_mapping:
+            m = service_api_mapping[service_name]
+            if isinstance(m, dict) and 'default_price' in m:
+                return float(m['default_price'])
+    except Exception:
+        pass
+
+    # fallback
     return 0.0
 
 # =========================
@@ -2701,17 +2722,26 @@ def ludo_services_keyboard(user_id: int):
 # =========================
 def _all_service_names_sorted():
     names = set()
-    names.update(list(services_dict.keys()))
-    if 'itunes_services' in globals(): names.update(list(itunes_services.keys()))
-    if 'pubg_services' in globals(): names.update(list(pubg_services.keys()))
-    if 'telegram_services' in globals(): names.update(list(telegram_services.keys()))
-    if 'ludo_services' in globals(): names.update(list(ludo_services.keys()))
+    # Known dicts
+    for name in [
+        'services_dict','itunes_services','pubg_services','telegram_services','ludo_services',
+        'mobile_topup_services','topup_services','recharge_services','phone_balance_services','telecom_services'
+    ]:
+        if name in globals() and isinstance(globals()[name], dict):
+            names.update(list(globals()[name].keys()))
+    # Any *_services dicts dynamically
+    for k,v in list(globals().items()):
+        if isinstance(v, dict) and k.endswith('_services'):
+            names.update(list(v.keys()))
+    # service_api_mapping keys
+    if 'service_api_mapping' in globals() and isinstance(service_api_mapping, dict):
+        names.update(list(service_api_mapping.keys()))
     try:
-        # أضف أي خدمات ظهرت في overrides ولم تعد موجودة في القواميس
         extra = _exec("SELECT service_name FROM service_prices", (), "all") or []
         for (n,) in extra:
             names.add(n)
-    except Exception: pass
+    except Exception:
+        pass
     return sorted(names)
 
 # =========================
@@ -2729,8 +2759,7 @@ def admin_menu_keyboard():
         [InlineKeyboardButton("عدد المستخدمين", callback_data="admin_users_count"), InlineKeyboardButton("رصيد المستخدمين", callback_data="admin_users_balance")],
         [InlineKeyboardButton("إدارة المشرفين", callback_data="manage_mods")],
         [InlineKeyboardButton("حضر المستخدم", callback_data="block_user"), InlineKeyboardButton("الغاء حظر المستخدم", callback_data="unblock_user")],
-        [InlineKeyboardButton("اعلان للمستخدمين (خاص)", callback_data="admin_announce")],
-        [InlineKeyboardButton("اعلان للقنوات/الكروبات", callback_data="admin_announce_chats")],
+        [InlineKeyboardButton("الاعلان", callback_data="admin_announce_unified")],
         [InlineKeyboardButton("تعديل الأسعار والكميات", callback_data="edit_prices_qty")],
         [InlineKeyboardButton("أكواد خدمات API", callback_data="admin_service_codes")],
         [InlineKeyboardButton("نظام الإحالة", callback_data="admin_referrals")],
@@ -2738,7 +2767,6 @@ def admin_menu_keyboard():
         [InlineKeyboardButton("المتصدرين🎉", callback_data="show_leaderboard")]
     ]
     return InlineKeyboardMarkup(buttons)
-
 # =========================
 # [ADDON] بث للإعلان داخل القنوات والمجموعات
 # =========================
@@ -2772,6 +2800,57 @@ def broadcast_to_chats(update: Update, context: CallbackContext):
             failed += 1
             logger.error("broadcast_to_chats error for %s: %s", cid, e)
     update.message.reply_text(f"تم إرسال الإعلان إلى {sent} دردشة. فشل {failed}.")
+
+
+# --- Unified broadcast helpers ---
+def db_list_users():
+    try:
+        rows = _exec("SELECT user_id FROM users", (), "all") or []
+        return [int(r[0]) for r in rows if r and r[0]]
+    except Exception as e:
+        logger.error("db_list_users error: %s", e)
+        return []
+
+def _send_announcement_to(chat_id, update: Update, context: CallbackContext, prefix="✨ إعلان من مالك البوت ✨\n\n"):
+    try:
+        if update.message.photo:
+            file_id = update.message.photo[-1].file_id
+            caption = (update.message.caption or "")
+            context.bot.send_photo(chat_id=chat_id, photo=file_id, caption=prefix+caption)
+        elif update.message.video:
+            file_id = update.message.video.file_id
+            caption = (update.message.caption or "")
+            context.bot.send_video(chat_id=chat_id, video=file_id, caption=prefix+caption)
+        elif update.message.voice:
+            context.bot.send_message(chat_id=chat_id, text=prefix)
+            context.bot.send_voice(chat_id=chat_id, voice=update.message.voice.file_id)
+        elif update.message.text:
+            context.bot.send_message(chat_id=chat_id, text=prefix + update.message.text)
+        else:
+            return False
+        return True
+    except Exception as e:
+        logger.error("send announcement error for %s: %s", chat_id, e)
+        return False
+
+def broadcast_to_users(update: Update, context: CallbackContext):
+    users = db_list_users()
+    if not users:
+        update.message.reply_text("لا توجد قائمة مستخدمين للبث إليها.")
+        return
+    sent, failed = 0, 0
+    for uid in users:
+        ok = _send_announcement_to(uid, update, context)
+        if ok: sent += 1
+        else: failed += 1
+    update.message.reply_text(f"تم إرسال الإعلان (خاص) إلى {sent} مستخدم. فشل {failed}.")
+
+def broadcast_unified(update: Update, context: CallbackContext, scope: str):
+    sent_total = 0
+    if scope in ("users","all"):
+        broadcast_to_users(update, context)
+    if scope in ("chats","all"):
+        broadcast_to_chats(update, context)
 
 # =========================
 # [ADDON] زر إدارة الأسعار والكميات
@@ -2855,6 +2934,16 @@ _old_admin_text_gate = _admin_text_gate
 def _admin_text_gate(update: Update, context: CallbackContext):
     _hook_record_chat_from_update(update)
     user_id = update.effective_user.id
+
+    # Unified broadcast text/media handling
+    if user_id == ADMIN_ID and context.user_data.get("waiting_for_broadcast_unified"):
+        scope = context.user_data.get("broadcast_scope","all")
+        try:
+            broadcast_unified(update, context, scope)
+        finally:
+            context.user_data.pop("waiting_for_broadcast_unified", None)
+            context.user_data.pop("broadcast_scope", None)
+        return True
     if user_id == ADMIN_ID and context.user_data.get("waiting_for_broadcast_chats"):
         # نفّذ البث للقنوات والكروبات ثم حرّر العلم
         try:
