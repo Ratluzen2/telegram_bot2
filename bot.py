@@ -1313,6 +1313,107 @@ def button_handler(update: Update, context: CallbackContext):
         if user_id != ADMIN_ID:
             query.edit_message_text("عذراً، هذه الصفحة للمالك فقط.")
             return
+    # ====== إدارة الأسعار/الكميات: التنقل بين الأقسام والصفحات ======
+    if data.startswith("ap_cat_"):
+        if user_id != ADMIN_ID:
+            query.answer("غير مسموح.", show_alert=True); return
+        cat = data.replace("ap_cat_", "")
+        _ap_list_services(update, context, query, cat, page=0); return
+
+    if data.startswith("ap_page_"):
+        if user_id != ADMIN_ID:
+            query.answer("غير مسموح.", show_alert=True); return
+        # الصيغة: ap_page_{cat}_{page}
+        try:
+            _, _, rest = data.split("_", 2)
+            cat, page_str = rest.rsplit("_", 1)
+            page = int(page_str)
+        except Exception:
+            query.answer("خيار غير صالح.", show_alert=True); return
+        _ap_list_services(update, context, query, cat, page=page); return
+
+    if data.startswith("ap_sel_"):
+        if user_id != ADMIN_ID:
+            query.answer("غير مسموح.", show_alert=True); return
+        try:
+            idx = int(data.replace("ap_sel_", ""))
+        except Exception:
+            query.answer("خيار غير صالح.", show_alert=True); return
+        _ap_show_service_actions(update, context, query, idx); return
+
+    # ====== تعديل السعر ======
+    if data.startswith("ap_setprice_"):
+        if user_id != ADMIN_ID:
+            query.answer("غير مسموح.", show_alert=True); return
+        idx = int(data.replace("ap_setprice_", ""))
+        items = context.user_data.get("ap_map") or []
+        if idx < 0 or idx >= len(items):
+            query.answer("خيار غير صالح.", show_alert=True); return
+        srv = items[idx]
+        context.user_data["waiting_for_price_edit_service"] = srv
+        query.edit_message_text(
+            f"أرسل السعر الجديد بالدولار لخدمة:\n• {srv}\nمثال: 7.5",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data=f"ap_sel_{idx}")]])
+        )
+        return
+
+    if data.startswith("ap_delprice_"):
+        if user_id != ADMIN_ID:
+            query.answer("غير مسموح.", show_alert=True); return
+        idx = int(data.replace("ap_delprice_", ""))
+        items = context.user_data.get("ap_map") or []
+        if idx < 0 or idx >= len(items):
+            query.answer("خيار غير صالح.", show_alert=True); return
+        srv = items[idx]
+        try:
+            db_delete_price_override(srv)
+        except Exception:
+            pass
+        query.edit_message_text(
+            f"تم حذف تعديل السعر والرجوع للافتراضي.\n• {srv}",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data=f"ap_sel_{idx}")]])
+        )
+        return
+
+    # ====== تعديل الكمية ======
+    if data.startswith("ap_setqty_"):
+        if user_id != ADMIN_ID:
+            query.answer("غير مسموح.", show_alert=True); return
+        idx = int(data.replace("ap_setqty_", ""))
+        items = context.user_data.get("ap_map") or []
+        if idx < 0 or idx >= len(items):
+            query.answer("خيار غير صالح.", show_alert=True); return
+        srv = items[idx]
+        context.user_data["waiting_for_qty_edit_service"] = srv
+        query.edit_message_text(
+            f"أرسل الكمية الجديدة (عدد صحيح) لخدمة:\n• {srv}\nمثال: 5000",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data=f"ap_sel_{idx}")]])
+        )
+        return
+
+    if data.startswith("ap_delqty_"):
+        if user_id != ADMIN_ID:
+            query.answer("غير مسموح.", show_alert=True); return
+        idx = int(data.replace("ap_delqty_", ""))
+        items = context.user_data.get("ap_map") or []
+        if idx < 0 or idx >= len(items):
+            query.answer("خيار غير صالح.", show_alert=True); return
+        srv = items[idx]
+        try:
+            base = service_api_mapping.get(srv)
+            if base:
+                base_q = int(base.get("quantity_multiplier", 1000))
+                db_set_quantity_only(srv, base_q)
+            else:
+                db_delete_service_override(srv)
+        except Exception:
+            pass
+        query.edit_message_text(
+            f"تمت إعادة الكمية للافتراصي.\n• {srv}",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data=f"ap_sel_{idx}")]])
+        )
+        return
+
         _ap_show_categories(query); return
 
     if data.startswith("ap_page_"):
