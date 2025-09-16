@@ -8,7 +8,7 @@
 - المتصدرين🎉: عرض أعلى 10 إنفاقًا مع الجوائز (موجود للمستخدم/المشرف في الرئيسية، وللمالك داخل لوحته)
 - طرق شحن إضافية: نقاط سنتات / هلابي (نفس رسالة الدعم)
 - تفريغ الحالات تلقائيًا عند /start وأي زر رجوع لمنع التداخل
-- إصلاح قسم "رفع سكور تيكتوك": أزرار قصيرة callback_data لتفادي حد 64 بايت
+- إصلاح قسم "رفع سكور تيكتوك": أزرار قصيرة callback_dataa لتفادي حد 64 بايت
 - قراءة الإعدادات من متغيّرات البيئة (Heroku Config Vars) أو القيم الافتراضية
 - NEW: زر "طلباتي" للمستخدم والمشرف + تخزين كامل الطلبات/الكروت/الحظر/السجل في Neon DB
 """
@@ -729,33 +729,16 @@ def get_base_price(service_name: str, default_price: float) -> float:
         return float(default_price)
 
 def get_display_price(user_id: int, service_name: str, default_price: float, kind: str="generic") -> float:
-
-def _format_user_service_label(user_id: int, name: str, base_price: float, kind: str="generic") -> str:
-    price = get_display_price(user_id, name, base_price, kind)
-    ov = db_get_service_override(name) or {}
-    q = ov.get("quantity_multiplier") or (service_api_mapping.get(name) or {}).get("quantity_multiplier")
-    return f"{name} - {price}$" + (f" (الكمية: {q})" if q else "")
-
     """يُستخدم عند عرض الأزرار؛ يطبّق override ثم خصم المشرف (إن وُجد)."""
     base = get_base_price(service_name, default_price)
     return get_effective_price(user_id, service_name, base, kind)
 
-def _get_default_service_id(service_name: str) -> str:
-    base = service_api_mapping.get(service_name) or {}
-    sid = base.get("service_id")
-    return str(sid) if sid is not None else ""
-
-def db_set_quantity_only(service_name: str, quantity_multiplier: int):
-    """تحديث الكمية فقط مع الحفاظ على service_id الحالي إن وجد، أو الافتراضي."""
-    ov = db_get_service_override(service_name) or {}
-    sid = ov.get("service_id") or _get_default_service_id(service_name)
-    if not sid:
-        sid = _get_default_service_id(service_name)
-    db_set_service_override(service_name, sid, int(quantity_multiplier))
-
-# =========================
-# لوحات المفاتيح (Keyboards)
-# =========================
+def _format_user_service_label(user_id: int, name: str, base_price: float, kind: str="generic") -> str:
+    """لعرض السعر مع الكمية للمستخدمين بشكل موحّد."""
+    price = get_display_price(user_id, name, base_price, kind)
+    ov = db_get_service_override(name) or {}
+    q = ov.get("quantity_multiplier") or (service_api_mapping.get(name) or {}).get("quantity_multiplier")
+    return f"{name} - {price}$" + (f" (الكمية: {q})" if q else "")
 def main_menu_keyboard(user_id: int):
     if user_id == ADMIN_ID:
         return InlineKeyboardMarkup([
@@ -899,7 +882,6 @@ def _ap_show_service_actions(update: Update, context: CallbackContext, query, id
     btns.append([InlineKeyboardButton("↩️ إعادة الكمية للافتراضي", callback_data=f"ap_delqty_{idx}")])
     btns.append([InlineKeyboardButton("رجوع", callback_data=f"ap_page_{context.user_data.get('ap_cat','smm')}_{context.user_data.get('ap_page',0)}")])
     query.edit_message_text(f"الخدمة:\n• {name}\nاختر الإجراء:", reply_markup=InlineKeyboardMarkup(btns))
-(f"الخدمة:\n• {name}\nاختر الإجراء:", reply_markup=InlineKeyboardMarkup(btns))
 
 # ======= خدمات شراء رصيد الهاتف (قسم جديد) =======
 mobile_recharge_services = {
@@ -924,7 +906,7 @@ def mobile_recharge_services_keyboard(user_id: int):
     buttons = []
     for service_name, base_price in mobile_recharge_services.items():
         eff = get_display_price(user_id, service_name, base_price, "mobile")
-        buttons.append([InlineKeyboardButton(_format_user_service_label(user_id, service_name, base_price, \"mobile\"), callback_data=f\"mobile_service_{service_name}\")])
+        buttons.append([InlineKeyboardButton(_format_user_service_label(user_id, service_name, base_price, "mobile"), callback_data=f"mobile_service_{service_name}")])
     buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
     return InlineKeyboardMarkup(buttons)
 
@@ -1488,7 +1470,7 @@ def button_handler(update: Update, context: CallbackContext):
         service_buttons = []
         for name, price in followers_services.items():
             eff = get_display_price(user_id, name, price, "generic")
-            service_buttons.append([InlineKeyboardButton(_format_user_service_label(user_id, name, price, \"generic\"), callback_data=f\"service_{name}\")])
+            service_buttons.append([InlineKeyboardButton(_format_user_service_label(user_id, name, price, "generic"), callback_data=f"service_{name}")])
         service_buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
         query.edit_message_text("اختر الخدمة المطلوبة:", reply_markup=InlineKeyboardMarkup(service_buttons))
         return
@@ -1498,7 +1480,7 @@ def button_handler(update: Update, context: CallbackContext):
         service_buttons = []
         for name, price in likes_services.items():
             eff = get_display_price(user_id, name, price, "generic")
-            service_buttons.append([InlineKeyboardButton(_format_user_service_label(user_id, name, price, \"generic\"), callback_data=f\"service_{name}\")])
+            service_buttons.append([InlineKeyboardButton(_format_user_service_label(user_id, name, price, "generic"), callback_data=f"service_{name}")])
         service_buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
         query.edit_message_text("اختر الخدمة المطلوبة:", reply_markup=InlineKeyboardMarkup(service_buttons))
         return
@@ -1508,7 +1490,7 @@ def button_handler(update: Update, context: CallbackContext):
         service_buttons = []
         for name, price in views_services.items():
             eff = get_display_price(user_id, name, price, "generic")
-            service_buttons.append([InlineKeyboardButton(_format_user_service_label(user_id, name, price, \"generic\"), callback_data=f\"service_{name}\")])
+            service_buttons.append([InlineKeyboardButton(_format_user_service_label(user_id, name, price, "generic"), callback_data=f"service_{name}")])
         service_buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
         query.edit_message_text("اختر الخدمة المطلوبة:", reply_markup=InlineKeyboardMarkup(service_buttons))
         return
@@ -1518,7 +1500,7 @@ def button_handler(update: Update, context: CallbackContext):
         service_buttons = []
         for name, price in live_views_services.items():
             eff = get_display_price(user_id, name, price, "generic")
-            service_buttons.append([InlineKeyboardButton(_format_user_service_label(user_id, name, price, \"generic\"), callback_data=f\"service_{name}\")])
+            service_buttons.append([InlineKeyboardButton(_format_user_service_label(user_id, name, price, "generic"), callback_data=f"service_{name}")])
         service_buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
         query.edit_message_text("اختر الخدمة المطلوبة:", reply_markup=InlineKeyboardMarkup(service_buttons))
         return
@@ -1580,7 +1562,7 @@ def button_handler(update: Update, context: CallbackContext):
         service_buttons = []
         for name, base_price in pubg_services.items():
             eff = get_effective_price(user_id, name, base_price, "pubg")
-            service_buttons.append([InlineKeyboardButton(_format_user_service_label(user_id, name, price, \"pubg\"), callback_data=f\"pubg_service_{name}\")])
+            service_buttons.append([InlineKeyboardButton(_format_user_service_label(user_id, name, price, "pubg"), callback_data=f"pubg_service_{name}")])
         service_buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
         query.edit_message_text("اختر خدمة شحن شدات ببجي:", reply_markup=InlineKeyboardMarkup(service_buttons))
         return
