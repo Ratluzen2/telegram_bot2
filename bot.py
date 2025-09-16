@@ -172,19 +172,6 @@ itunes_services = {
     "شراء رصيد 50 ايتونز": 90,
 }
 
-
-
-
-# ========= قسم رصيد الهاتف (Mobile Topup) =========
-# مثال افتراضي لشحن رصيد الهاتف داخل العراق (يمكنك تعديل الأسماء/الأسعار)
-mobile_topup_services = {
-    "شحن زين 5$": 5.0,
-    "شحن آسيا سيل 5$": 5.0,
-    "شحن كورك 5$": 5.0,
-    "شحن زين 10$": 10.0,
-    "شحن آسيا سيل 10$": 10.0,
-    "شحن كورك 10$": 10.0,
-}
 telegram_services = {
     "اعضاء قنوات تلي 1k": 3,
     "اعضاء قنوات تلي 2k": 6,
@@ -400,32 +387,49 @@ def db_set_service_override(service_name: str, service_id: str, quantity_multipl
              SET service_id=EXCLUDED.service_id, quantity_multiplier=EXCLUDED.quantity_multiplier""",
           (service_name, str(service_id), int(qm)))
 
+def db_delete_service_override(service_name: str):
+    _exec("DELETE FROM service_api_overrides WHERE service_name=%s", (service_name,))
 
 
 
-# --- جدول تخصيص الأسعار (Price Overrides) ---
+# === جدول أسعار مخصصة لكل خدمة (Price Overrides) ===
 _exec("""CREATE TABLE IF NOT EXISTS service_price_overrides (
     service_name TEXT PRIMARY KEY,
-    category     TEXT,
-    price        DOUBLE PRECISION,
-    updated_at   TIMESTAMPTZ DEFAULT NOW()
+    price REAL
 )""")
 
 def db_get_price_override(service_name: str):
     row = _exec("SELECT price FROM service_price_overrides WHERE service_name=%s", (service_name,), "one")
-    return (None if not row else float(row[0]))
+    if not row:
+        return None
+    try:
+        return float(row[0]) if row[0] is not None else None
+    except Exception:
+        return None
 
-def db_set_price_override(service_name: str, category: str, price: float):
-    _exec("""INSERT INTO service_price_overrides (service_name, category, price, updated_at)
-             VALUES (%s,%s,%s,NOW())
-             ON CONFLICT(service_name) DO UPDATE
-             SET category=EXCLUDED.category, price=EXCLUDED.price, updated_at=NOW()""",
-          (service_name, category, float(price)))
+def db_set_price_override(service_name: str, price: float):
+    _exec("""INSERT INTO service_price_overrides (service_name, price)
+             VALUES (%s,%s)
+             ON CONFLICT(service_name) DO UPDATE SET price=EXCLUDED.price""", (service_name, float(price)))
 
 def db_delete_price_override(service_name: str):
     _exec("DELETE FROM service_price_overrides WHERE service_name=%s", (service_name,))
-def db_delete_service_override(service_name: str):
-    _exec("DELETE FROM service_api_overrides WHERE service_name=%s", (service_name,))
+
+# تحديث/تعديل الكمية فقط دون فقدان service_id في جدول overrides
+def db_update_quantity_only(service_name: str, new_q: int):
+    # احفظ service_id الحالي إن وجد
+    current = db_get_service_override(service_name) or {}
+    sid = current.get("service_id") or (service_api_mapping.get(service_name) or {}).get("service_id")
+    qm = int(new_q)
+    if not sid:
+        # في حال عدم وجود sid، نحاول أخذ الافتراضي من القاموس
+        sid = (service_api_mapping.get(service_name) or {}).get("service_id")
+    if sid is None:
+        sid = ""
+    _exec("""INSERT INTO service_api_overrides (service_name, service_id, quantity_multiplier)
+             VALUES (%s,%s,%s)
+             ON CONFLICT(service_name) DO UPDATE SET service_id=EXCLUDED.service_id, quantity_multiplier=EXCLUDED.quantity_multiplier""",
+          (service_name, str(sid), int(qm)))
 
 # نظام الإحالة
 REFERRAL_COMMISSION_USD = 0.10
@@ -720,16 +724,6 @@ def get_effective_price(user_id: int, service_name: str, base_price: float, kind
         return base_price
 
 
-# ---- السعر الأساسي بعد تطبيق الـ Override إن وجد ----
-def get_price_with_overrides(service_name: str, default_price: float) -> float:
-    try:
-        ov = db_get_price_override(service_name)
-        return float(ov) if ov is not None else float(default_price)
-    except Exception as e:
-        logger.error("get_price_with_overrides error: %s", e)
-        return float(default_price)
-
-
 # =========================
 # خصومات المشرفين (10% خصم ثابت على جميع الخدمات للمشرفين فقط)
 # =========================
@@ -770,9 +764,7 @@ def main_menu_keyboard(user_id: int):
 
 def admin_menu_keyboard():
     buttons = [
-        
-        [InlineKeyboardButton("إدارة الأسعار والكميات", callback_data="admin_pricing")],
-[InlineKeyboardButton("الطلبات المعلّقة (الخدمات)", callback_data="pending_smm_orders")],
+        [InlineKeyboardButton("الطلبات المعلّقة (الخدمات)", callback_data="pending_smm_orders")],
         [InlineKeyboardButton("الكارتات المعلقة", callback_data="pending_cards")],
         [InlineKeyboardButton("طلبات شدات ببجي", callback_data="pending_pubg_orders")],
         [InlineKeyboardButton("طلبات شحن الايتونز", callback_data="pending_itunes_orders")],
@@ -784,7 +776,8 @@ def admin_menu_keyboard():
         [InlineKeyboardButton("حضر المستخدم", callback_data="block_user"), InlineKeyboardButton("الغاء حظر المستخدم", callback_data="unblock_user")],
         [InlineKeyboardButton("اعلان البوت", callback_data="admin_announce")],
         [InlineKeyboardButton("أكواد خدمات API", callback_data="admin_service_codes")],
-        [InlineKeyboardButton("نظام الإحالة", callback_data="admin_referrals")]
+        [InlineKeyboardButton("نظام الإحالة", callback_data="admin_referrals")],
+        [InlineKeyboardButton("الأسعار والكميات", callback_data="admin_price_qty")]
     ]
     buttons.append([InlineKeyboardButton("شرح الخصومات", callback_data="admin_discounts_info")])
     buttons.append([InlineKeyboardButton("المتصدرين🎉", callback_data="show_leaderboard")])
@@ -810,7 +803,7 @@ def tiktok_score_keyboard(user_id: int, context: CallbackContext):
     context.user_data["score_map"] = [name for name, _ in score_services]
     service_buttons = []
     for idx, (service_name, price) in enumerate(score_services):
-        eff = get_effective_price(user_id, service_name, get_price_with_overrides(service_name, price), "generic")
+        eff = get_effective_price(user_id, service_name, price, "generic")
         service_buttons.append([InlineKeyboardButton(f"{service_name} - {eff}$", callback_data=f"score_service_{idx}")])
     service_buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
     return InlineKeyboardMarkup(service_buttons)
@@ -818,7 +811,7 @@ def tiktok_score_keyboard(user_id: int, context: CallbackContext):
 def itunes_services_keyboard(user_id: int):
     buttons = []
     for service_name, price in itunes_services.items():
-        eff = get_effective_price(user_id, service_name, get_price_with_overrides(service_name, price), "itunes")
+        eff = get_effective_price(user_id, service_name, price, "itunes")
         buttons.append([InlineKeyboardButton(f"{service_name} - {eff}$", callback_data=f"itunes_service_{service_name}")])
     buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
     return InlineKeyboardMarkup(buttons)
@@ -826,7 +819,7 @@ def itunes_services_keyboard(user_id: int):
 def telegram_services_keyboard(user_id: int):
     buttons = []
     for service_name, price in telegram_services.items():
-        eff = get_effective_price(user_id, service_name, get_price_with_overrides(service_name, price), "telegram")
+        eff = get_effective_price(user_id, service_name, price, "telegram")
         buttons.append([InlineKeyboardButton(f"{service_name} - {eff}$", callback_data=f"telegram_service_{service_name}")])
     buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
     return InlineKeyboardMarkup(buttons)
@@ -835,7 +828,7 @@ def telegram_services_keyboard(user_id: int):
 def ludo_services_keyboard(user_id: int):
     buttons = []
     for service_name, price in ludo_services.items():
-        eff = get_effective_price(user_id, service_name, get_price_with_overrides(service_name, price), "ludo")
+        eff = get_effective_price(user_id, service_name, price, "ludo")
         buttons.append([InlineKeyboardButton(f"{service_name} - {eff}$", callback_data=f"ludo_service_{service_name}")])
     buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
     return InlineKeyboardMarkup(buttons)
@@ -852,7 +845,7 @@ def clear_all_waiting_flags(context: CallbackContext):
         "selected_telegram_service", "telegram_service_price", "waiting_for_telegram_link",
         "waiting_for_new_mod", "waiting_for_remove_mod", "admin_target_id",
         "score_map",
-        "my_orders_offset", "waiting_for_bulk_service_code", "__target_services__", "__groups__"
+        "my_orders_offset", "waiting_for_bulk_service_code", "__target_services__", "__groups__", "waiting_edit_price_for", "waiting_edit_qty_for", "__prq_list__", "__prq_cat__"
     ]
     for key in waiting_keys:
         context.user_data.pop(key, None)
@@ -996,45 +989,6 @@ def _admin_text_gate(update: Update, context: CallbackContext):
         update.message.reply_text(f"تم تعيين الكود {sid} لعدد {count} خدمة داخل المجموعة ✅",
                                   reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_service_codes")]]))
         return True
-
-    # سعر جديد
-    if context.user_data.get("waiting_for_new_price"):
-        try:
-            txt  = (update.message.text or "").strip().replace(",", ".")
-            val  = float(txt)
-            svc  = context.user_data.get("pricing_target_service")
-            cat  = context.user_data.get("pricing_cat") or "smm"
-            if not svc:
-                update.message.reply_text("لا يوجد هدف محدد."); return True
-            db_set_price_override(svc, cat, val)
-            context.user_data.pop("waiting_for_new_price", None)
-            update.message.reply_text(f"تم تحديث السعر لـ ({svc}) إلى {val}$ ✅",
-                                      reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data=f"admin_pricing_cat_{cat}")]]))
-        except Exception as e:
-            logger.error("set price failed: %s", e)
-            update.message.reply_text("تعذّر قراءة السعر. أرسل مثال: 3.75")
-        return True
-
-    # كمية جديدة (API Quantity) — للسوشيال فقط
-    if context.user_data.get("waiting_for_new_qty"):
-        try:
-            txt  = (update.message.text or "").strip()
-            val  = int(txt)
-            svc  = context.user_data.get("pricing_target_service")
-            if not svc or svc not in service_api_mapping:
-                update.message.reply_text("هذه الخدمة لا تدعم تغيير الكمية."); return True
-            ov = db_get_service_override(svc)
-            sid = (ov.get("service_id") if ov and ov.get("service_id") else service_api_mapping[svc]["service_id"])
-            db_set_service_override(svc, sid, val)
-            context.user_data.pop("waiting_for_new_qty", None)
-            cat  = context.user_data.get("pricing_cat") or "smm"
-            update.message.reply_text(f"تم تحديث الكمية (API Quantity) لـ ({svc}) إلى {val} ✅",
-                                      reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data=f"admin_pricing_cat_{cat}")]]))
-        except Exception as e:
-            logger.error("set qty failed: %s", e)
-            update.message.reply_text("تعذّر قراءة الكمية. أرسل رقم صحيح مثل 1000 أو 10000.")
-        return True
-
     return False
 
 def _get_bot_username(context: CallbackContext) -> str:
@@ -1193,100 +1147,1121 @@ def button_handler(update: Update, context: CallbackContext):
     data = query.data
 
 
+    # شرح الخصومات للمشرفين
+    if data == "mod_discount_info" and is_moderator(user_id):
+        try:
+            query.edit_message_text(
+                get_mod_discount_help_text(),
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="show_services")]])
+            )
+        except Exception:
+            context.bot.send_message(chat_id=update.effective_chat.id, text=get_mod_discount_help_text(), parse_mode="HTML")
+        return
 
+    query.answer()
 
-    # ===== إدارة الأسعار والكميات =====
-    if data == "admin_pricing" and user_id == ADMIN_ID:
-        cats = [
-            ("smm", "خدمات السوشيال (services_dict)"),
-            ("pubg", "شدات ببجي"),
-            ("itunes", "رصيد آيتونز"),
-            ("telegram", "خدمات تيليجرام"),
-            ("ludo", "خدمات لودو"),
-            ("mobile", "رصيد الهاتف (Mobile Topup)"),
+    clear_all_waiting_flags(context)
+
+    ban_msg = _is_user_blocked_now(user_id)
+    if ban_msg:
+        query.answer(ban_msg, show_alert=True)
+        return
+
+    if data == "back_main":
+        query.edit_message_text("القائمة الرئيسية:", reply_markup=main_menu_keyboard(user_id))
+        return
+    # لوحة الإحالة للمستخدم
+    if data == "referral_panel":
+        uname = _get_bot_username(context)
+        link = f"https://t.me/{uname}?start=ref_{user_id}"
+        stats = db_get_user_ref_stats(user_id)
+        lines = [
+            "👥 نظام الإحالة\n",
+            f"🔗 رابطك: {link}",
+            f"📣 عدد المدعوين: {stats.get('total',0)}",
+            f"💸 أرباح مدفوعة: {stats.get('paid',0)} شخص = {stats.get('total_earned',0):.2f}$",
+            f"⏳ بانتظار الدفع: {stats.get('pending',0)}",
+            "", "آخر المدعوين:"
         ]
-        kb = [[InlineKeyboardButton(title, callback_data=f"admin_pricing_cat_{cat}")]
-              for cat, title in cats]
-        kb.append([InlineKeyboardButton("رجوع", callback_data="admin_menu")])
-        query.edit_message_text("إختر القسم المطلوب:", reply_markup=InlineKeyboardMarkup(kb))
+        for it in stats.get("invites", []):
+            iid, fn, un, paid, created_at, first_at = it
+            tag = "✅" if paid else "⏳"
+            uname2 = f"@{un}" if un and un != "NoUsername" else ""
+            lines.append(f"- {fn} {uname2} — {tag}")
+        buttons = [[InlineKeyboardButton("رجوع", callback_data="back_main")]]
+        query.edit_message_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(buttons))
         return
 
-    if data.startswith("admin_pricing_cat_") and user_id == ADMIN_ID:
-        cat = data.split("_")[-1]
-        if cat == "smm":
-            items = list(services_dict.items())
-        elif cat == "pubg":
-            items = list(pubg_services.items())
-        elif cat == "itunes":
-            items = list(itunes_services.items())
-        elif cat == "telegram":
-            items = list(telegram_services.items())
-        elif cat == "ludo":
-            items = list(ludo_services.items())
-        elif cat == "mobile":
-            items = list(mobile_topup_services.items())
+    if data == "show_services":
+        query.edit_message_text("اختر القسم:", reply_markup=services_menu_keyboard())
+        return
+
+    # ======= المتصدرين🎉 =======
+    if data == "show_leaderboard":
+        top = _exec("""SELECT user_id, full_name, username, total_spent
+                       FROM users ORDER BY total_spent DESC, user_id ASC LIMIT 10""", fetch="all") or []
+        header = (
+            "<b>🥇 المتصدرون في الشراء داخل البوت</b>\n\n"
+            "يحصل <b>أول 3 متصدرين</b> على جوائز تُضاف تلقائيًا خلال أسبوع:\n"
+            "• المركز الأول: 10$ 💰\n"
+            "• المركز الثاني: 5$ 💸\n"
+            "• المركز الثالث: 3$ 🎁\n\n"
+        )
+        if not top:
+            text_msg = header + "لا توجد عمليات شراء بعد. كن أنت الأول وابدأ بتجميع الصدارة!"
         else:
-            items = []
-
-        context.user_data["pricing_items"] = [name for name, _ in items]
-        context.user_data["pricing_cat"] = cat
-
-        buttons = []
-        for idx, (name, default_price) in enumerate(items[:50]):
-            current = get_price_with_overrides(name, default_price)
-            buttons.append([InlineKeyboardButton(f"{idx+1}. {name} — {current}$", callback_data=f"admin_pricing_edit_{idx}")])
-        buttons.append([InlineKeyboardButton("رجوع", callback_data="admin_pricing")])
-        query.edit_message_text("اختر خدمة لتعديلها:", reply_markup=InlineKeyboardMarkup(buttons))
+            lines = []
+            for i, (uid, fn, un, spent) in enumerate(top, start=1):
+                name = escape(fn or "مستخدم")
+                usertag = f"@{un}" if un else ""
+                lines.append(f"{i}. {name} {escape(usertag)} — إجمالي الصرف: {round(spent or 0, 2)}$")
+            text_msg = header + "\n".join(lines)
+        kb = [[InlineKeyboardButton("رجوع", callback_data="back_main")]]
+        query.edit_message_text(text_msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
         return
 
-    if data.startswith("admin_pricing_edit_") and user_id == ADMIN_ID:
+    # ======= عرض الأقسام بأسعار =======
+    if data == "show_followers":
+        followers_services = {k: v for k, v in services_dict.items() if "متابعين" in k}
+        service_buttons = []
+        for name, price in followers_services.items():
+            eff = get_effective_price(user_id, name, price, "generic")
+            service_buttons.append([InlineKeyboardButton(f"{name} - {eff}$", callback_data=f"service_{name}")])
+        service_buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
+        query.edit_message_text("اختر الخدمة المطلوبة:", reply_markup=InlineKeyboardMarkup(service_buttons))
+        return
+
+    if data == "show_likes":
+        likes_services = {k: v for k, v in services_dict.items() if "لايكات" in k}
+        service_buttons = []
+        for name, price in likes_services.items():
+            eff = get_effective_price(user_id, name, price, "generic")
+            service_buttons.append([InlineKeyboardButton(f"{name} - {eff}$", callback_data=f"service_{name}")])
+        service_buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
+        query.edit_message_text("اختر الخدمة المطلوبة:", reply_markup=InlineKeyboardMarkup(service_buttons))
+        return
+
+    if data == "show_views":
+        views_services = {k: v for k, v in services_dict.items() if ("مشاهدات تيكتوك" in k or "مشاهدات انستغرام" in k)}
+        service_buttons = []
+        for name, price in views_services.items():
+            eff = get_effective_price(user_id, name, price, "generic")
+            service_buttons.append([InlineKeyboardButton(f"{name} - {eff}$", callback_data=f"service_{name}")])
+        service_buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
+        query.edit_message_text("اختر الخدمة المطلوبة:", reply_markup=InlineKeyboardMarkup(service_buttons))
+        return
+
+    if data == "show_live_views":
+        live_views_services = {k: v for k, v in services_dict.items() if "مشاهدات بث" in k}
+        service_buttons = []
+        for name, price in live_views_services.items():
+            eff = get_effective_price(user_id, name, price, "generic")
+            service_buttons.append([InlineKeyboardButton(f"{name} - {eff}$", callback_data=f"service_{name}")])
+        service_buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
+        query.edit_message_text("اختر الخدمة المطلوبة:", reply_markup=InlineKeyboardMarkup(service_buttons))
+        return
+
+    if data == "show_tiktok_score":
+        query.edit_message_text("اختر خدمة رفع سكور تيكتوك المطلوبة:", reply_markup=tiktok_score_keyboard(user_id, context))
+        return
+
+    if data.startswith("score_service_"):
         try:
             idx = int(data.split("_")[-1])
         except Exception:
-            query.answer("خطأ في الاختيار"); return
-        names = context.user_data.get("pricing_items") or []
-        cat   = context.user_data.get("pricing_cat") or "smm"
+            query.edit_message_text("حدث خطأ في اختيار الخدمة.")
+            return
+        names = context.user_data.get("score_map") or [k for k in services_dict.keys() if ("رفع سكور" in k)]
         if idx < 0 or idx >= len(names):
-            query.answer("خدمة غير موجودة", show_alert=True); return
+            query.edit_message_text("الخدمة غير موجودة.")
+            return
         service_name = names[idx]
-        context.user_data["pricing_target_service"] = service_name
-        kb = [[InlineKeyboardButton("تغيير السعر 💲", callback_data="admin_pricing_set_price")]]
-        if cat == "smm" and (service_name in service_api_mapping):
-            kb.append([InlineKeyboardButton("تغيير الكمية (API Quantity) 🔢", callback_data="admin_pricing_set_qty")])
-        kb.append([InlineKeyboardButton("حذف تخصيص السعر ↩️", callback_data="admin_pricing_clear_price")])
-        kb.append([InlineKeyboardButton("رجوع", callback_data=f"admin_pricing_cat_{cat}")])
-        query.edit_message_text(f"إدارة: {service_name}", reply_markup=InlineKeyboardMarkup(kb))
+        base_price = services_dict.get(service_name)
+        if base_price is None:
+            query.edit_message_text("الخدمة غير موجودة.")
+            return
+        price = get_effective_price(user_id, service_name, base_price, "generic")
+        current_balance = users_balance.get(user_id, 0.0)
+        if current_balance < price:
+            buttons = [
+                [InlineKeyboardButton("شحن عبر اسياسيل", callback_data="charge_asiacell")],
+                [InlineKeyboardButton("شحن عبر سوبركي", callback_data="charge_superkey")],
+                [InlineKeyboardButton("شحن عبر زين كاش", callback_data="charge_zaincash")],
+                [InlineKeyboardButton("شحن عبر USDT", callback_data="charge_usdt")],
+                [InlineKeyboardButton("شحن عبر نقاط سنتات", callback_data="charge_cent_points")],
+                [InlineKeyboardButton("شحن عبر هلابي", callback_data="charge_helabi")],
+                [InlineKeyboardButton("رجوع", callback_data="show_tiktok_score")]
+            ]
+            query.edit_message_text("رصيدك ليس كافياً.", reply_markup=InlineKeyboardMarkup(buttons))
+            return
+        # تعليمات الإدخال
+        message_text = (
+            "الرجاء إرسال الرابط الخاص بالخدمة المطلوبة:\n"
+            "🔴 ملاحظة: أرسل <b>الرابط</b> وليس اليوزرنيم!"
+        )
+        context.user_data["selected_service"] = service_name
+        context.user_data["service_price"] = price
+        query.edit_message_text(message_text, parse_mode="HTML")
         return
 
-    if data == "admin_pricing_set_price" and user_id == ADMIN_ID:
-        context.user_data["waiting_for_new_price"] = True
-        query.edit_message_text("أرسل السعر الجديد بالدولار (مثال: 3.75):",
-                                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("إلغاء", callback_data=f"admin_pricing_edit_back")]]))
+    if data == "show_itunes_services":
+        query.edit_message_text("اختر الخدمة المطلوبة:", reply_markup=itunes_services_keyboard(user_id))
         return
 
-    if data == "admin_pricing_set_qty" and user_id == ADMIN_ID:
-        context.user_data["waiting_for_new_qty"] = True
-        query.edit_message_text("أرسل الكمية (API Quantity) الجديدة كعدد صحيح (مثال: 1000 أو 10000):",
-                                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("إلغاء", callback_data=f"admin_pricing_edit_back")]]))
+    if data == "show_telegram_services":
+        query.edit_message_text("اختر الخدمة المطلوبة:", reply_markup=telegram_services_keyboard(user_id))
         return
 
-    if data == "admin_pricing_clear_price" and user_id == ADMIN_ID:
-        svc = context.user_data.get("pricing_target_service")
-        if svc:
-            db_delete_price_override(svc)
-            query.edit_message_text("تم حذف تخصيص السعر لهذه الخدمة ✅",
-                                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_pricing")]]))
+    if data == "show_pubg":
+        service_buttons = []
+        for name, base_price in pubg_services.items():
+            eff = get_effective_price(user_id, name, base_price, "pubg")
+            service_buttons.append([InlineKeyboardButton(f"{name} - {eff}$", callback_data=f"pubg_service_{name}")])
+        service_buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
+        query.edit_message_text("اختر خدمة شحن شدات ببجي:", reply_markup=InlineKeyboardMarkup(service_buttons))
+        return
+
+    # اختيار خدمة عامة
+    if data.startswith("service_"):
+        service_name = data[len("service_"):]
+        base_price = services_dict.get(service_name)
+        if base_price is None:
+            query.edit_message_text("الخدمة غير موجودة.")
+            return
+        price = get_effective_price(user_id, service_name, base_price, "generic")
+        current_balance = users_balance.get(user_id, 0.0)
+        if current_balance < price:
+            buttons = [
+                [InlineKeyboardButton("شحن عبر اسياسيل", callback_data="charge_asiacell")],
+                [InlineKeyboardButton("شحن عبر سوبركي", callback_data="charge_superkey")],
+                [InlineKeyboardButton("شحن عبر زين كاش", callback_data="charge_zaincash")],
+                [InlineKeyboardButton("شحن عبر USDT", callback_data="charge_usdt")],
+                [InlineKeyboardButton("شحن عبر نقاط سنتات", callback_data="charge_cent_points")],
+                [InlineKeyboardButton("شحن عبر هلابي", callback_data="charge_helabi")],
+                [InlineKeyboardButton("رجوع", callback_data="show_services")]
+            ]
+            query.edit_message_text("رصيدك ليس كافياً.", reply_markup=InlineKeyboardMarkup(buttons))
+            return
+
+        # تعليمات خاصة لبعض الخدمات
+        if "انستغرام" in service_name:
+            message_text = (
+                "الرجاء إرسال رابط الخدمة الخاص بك\n"
+                "🔴 تنبيه:\n"
+                "يرجى إطفاء زر 'تميز للمراجعة' داخل حسابك الانستغرام قبل ارسال رابط الخدمه لضمان إكمال طلبك!"
+            )
+        elif "رفع سكور بث" in service_name:
+            message_text = "يرجى ارسال رابط البث المباشر الخاص بك على تيكتوك.\n🔴 تنبيه: أرسل <b>رابط البث</b> وليس اليوزرنيم."
+        elif "تيكتوك" in service_name:
+            message_text = "الرجاء إرسال الرابط الخاص بالخدمة المطلوبة:\n🔴 ملاحظة: أرسل <b>الرابط</b> وليس اليوزرنيم!"
         else:
-            query.answer("لا يوجد هدف محدد")
+            message_text = "الرجاء إرسال الرابط الخاص بالخدمة المطلوبة:"
+        context.user_data["selected_service"] = service_name
+        context.user_data["service_price"] = price
+        query.edit_message_text(message_text, parse_mode="HTML")
         return
 
-    if data == "admin_pricing_edit_back" and user_id == ADMIN_ID:
-        cat = context.user_data.get("pricing_cat") or "smm"
-        query.answer()
-        query.data = f"admin_pricing_cat_{cat}"
-        # سيعاد عرض القائمة عبر نفس المعالج
+    
+    # قسم خدمات لودو
+    if data == "show_ludo_services":
+        query.edit_message_text("اختر خدمة لودو المطلوبة:", reply_markup=ludo_services_keyboard(user_id))
         return
 
+    # اختيار خدمة لودو
+    if data.startswith("ludo_service_"):
+        service_name = data[len("ludo_service_"):]
+        base_price = ludo_services.get(service_name, 0)
+        price = get_effective_price(user_id, service_name, base_price, "ludo")
+        current_balance = users_balance.get(user_id, 0.0)
+        if current_balance < price:
+            buttons = [
+                [InlineKeyboardButton("شحن عبر اسياسيل", callback_data="charge_asiacell")],
+                [InlineKeyboardButton("شحن عبر سوبركي", callback_data="charge_superkey")],
+                [InlineKeyboardButton("شحن عبر زين كاش", callback_data="charge_zaincash")],
+                [InlineKeyboardButton("شحن عبر USDT", callback_data="charge_usdt")],
+                [InlineKeyboardButton("شحن عبر نقاط سنتات", callback_data="charge_cent_points")],
+                [InlineKeyboardButton("شحن عبر هلابي", callback_data="charge_helabi")],
+                [InlineKeyboardButton("رجوع", callback_data="show_ludo_services")]
+            ]
+            query.edit_message_text("رصيدك ليس كافياً.", reply_markup=InlineKeyboardMarkup(buttons))
+            return
+        context.user_data["selected_ludo_service"] = service_name
+        context.user_data["ludo_service_price"] = price
+        query.edit_message_text("أرسل آيدي لودو الخاص بك (أرقام فقط).", parse_mode="HTML")
+        return
+# اختيار خدمة ببجي
+    if data.startswith("pubg_service_"):
+        name = data[len("pubg_service_"):]
+        base_price = pubg_services.get(name, 0)
+        price = get_effective_price(user_id, name, base_price, "pubg")
+        current_balance = users_balance.get(user_id, 0.0)
+        if current_balance < price:
+            buttons = [
+                [InlineKeyboardButton("شحن عبر اسياسيل", callback_data="charge_asiacell")],
+                [InlineKeyboardButton("شحن عبر سوبركي", callback_data="charge_superkey")],
+                [InlineKeyboardButton("شحن عبر زين كاش", callback_data="charge_zaincash")],
+                [InlineKeyboardButton("شحن عبر USDT", callback_data="charge_usdt")],
+                [InlineKeyboardButton("شحن عبر نقاط سنتات", callback_data="charge_cent_points")],
+                [InlineKeyboardButton("شحن عبر هلابي", callback_data="charge_helabi")],
+                [InlineKeyboardButton("رجوع", callback_data="show_pubg")]
+            ]
+            query.edit_message_text("رصيدك ليس كافياً.", reply_markup=InlineKeyboardMarkup(buttons))
+            return
+        context.user_data["selected_pubg_service"] = name
+        context.user_data["pubg_service_price"] = price
+        query.edit_message_text("ارسل الايدي الخاص بك:")
+        return
+
+    # اختيار خدمة ايتونز
+    if data.startswith("itunes_service_"):
+        service_name = data[len("itunes_service_"):]
+        base_price = itunes_services.get(service_name, 0)
+        price = get_effective_price(user_id, service_name, base_price, "itunes")
+        current_balance = users_balance.get(user_id, 0.0)
+        if current_balance < price:
+            buttons = [
+                [InlineKeyboardButton("شحن عبر اسياسيل", callback_data="charge_asiacell")],
+                [InlineKeyboardButton("شحن عبر سوبركي", callback_data="charge_superkey")],
+                [InlineKeyboardButton("شحن عبر زين كاش", callback_data="charge_zaincash")],
+                [InlineKeyboardButton("شحن عبر USDT", callback_data="charge_usdt")],
+                [InlineKeyboardButton("شحن عبر نقاط سنتات", callback_data="charge_cent_points")],
+                [InlineKeyboardButton("شحن عبر هلابي", callback_data="charge_helabi")],
+                [InlineKeyboardButton("رجوع", callback_data="show_itunes_services")]
+            ]
+            query.edit_message_text("رصيدك ليس كافياً.", reply_markup=InlineKeyboardMarkup(buttons))
+            return
+        context.user_data["selected_itunes_service"] = service_name
+        context.user_data["itunes_service_price"] = price
+        query.edit_message_text(f"تم اختيار الخدمة: {service_name}\n\nارسل رقم 1 لتأكيد طلبك")
+        context.user_data["waiting_for_itunes_confirm"] = True
+        return
+
+    # اختيار خدمة تلغرام
+    if data.startswith("telegram_service_"):
+        service_name = data[len("telegram_service_"):]
+        base_price = telegram_services.get(service_name, 0)
+        price = get_effective_price(user_id, service_name, base_price, "telegram")
+        current_balance = users_balance.get(user_id, 0.0)
+        if current_balance < price:
+            buttons = [
+                [InlineKeyboardButton("شحن عبر اسياسيل", callback_data="charge_asiacell")],
+                [InlineKeyboardButton("شحن عبر سوبركي", callback_data="charge_superkey")],
+                [InlineKeyboardButton("شحن عبر زين كاش", callback_data="charge_zaincash")],
+                [InlineKeyboardButton("شحن عبر USDT", callback_data="charge_usdt")],
+                [InlineKeyboardButton("شحن عبر نقاط سنتات", callback_data="charge_cent_points")],
+                [InlineKeyboardButton("شحن عبر هلابي", callback_data="charge_helabi")],
+                [InlineKeyboardButton("رجوع", callback_data="show_telegram_services")]
+            ]
+            query.edit_message_text("رصيدك ليس كافياً.", reply_markup=InlineKeyboardMarkup(buttons))
+            return
+        context.user_data["selected_telegram_service"] = service_name
+        context.user_data["telegram_service_price"] = price
+        context.user_data["waiting_for_telegram_link"] = True
+        note_text = (
+            "الرجاء إرسال رابط دعوة انضمام وليس رابط القناة أو اسم المستخدم (مثل: https://t.me/+xxxx).\n\n"
+            "خطوات إنشاء رابط الدعوة الخاص:\n"
+            "1. ادخل إلى القناة.\n"
+            "2. اختر خيار المشتركون.\n"
+            "3. اضغط على الدعوة عبر رابط خاص.\n"
+            "4. أنشئ رابط دعوة جديد."
+        )
+        query.edit_message_text(note_text)
+        return
+
+    # عرض الرصيد
+    if data == "show_balance":
+        balance = users_balance.get(user_id, 0.0)
+        buttons = [
+            [InlineKeyboardButton("شحن عبر اسياسيل", callback_data="charge_asiacell")],
+            [InlineKeyboardButton("شحن عبر سوبركي", callback_data="charge_superkey")],
+            [InlineKeyboardButton("شحن عبر زين كاش", callback_data="charge_zaincash")],
+            [InlineKeyboardButton("شحن عبر USDT", callback_data="charge_usdt")],
+            [InlineKeyboardButton("شحن عبر نقاط سنتات", callback_data="charge_cent_points")],
+            [InlineKeyboardButton("شحن عبر هلابي", callback_data="charge_helabi")],
+            [InlineKeyboardButton("رجوع", callback_data="back_main")]
+        ]
+        query.edit_message_text(f"رصيدك الحالي: {balance}$", reply_markup=InlineKeyboardMarkup(buttons))
+        return
+
+    # زر طلباتي (صفحة قابلة للتنقل)
+    if data == "my_orders" or data.startswith("my_orders_"):
+        offset = 0
+        if data == "my_orders":
+            offset = 0
+        elif data.startswith("my_orders_page_"):
+            try:
+                offset = int(data.split("_")[-1])
+            except:
+                offset = 0
+        context.user_data["my_orders_offset", "waiting_for_bulk_service_code", "__target_services__", "__groups__"] = offset
+        total = db_count_user_orders(user_id)
+        orders = db_get_user_orders(user_id, limit=10, offset=offset)
+        if not orders:
+            kb = [[InlineKeyboardButton("رجوع", callback_data="back_main")]]
+            query.edit_message_text("لا توجد طلبات بعد.", reply_markup=InlineKeyboardMarkup(kb))
+            return
+        lines = []
+        for (oid, cat, service, price, status, api_no, at, ct) in orders:
+            when = at.strftime("%Y-%m-%d %H:%M")
+            end = f" | تمّ: {ct.strftime('%Y-%m-%d %H:%M')}" if ct else ""
+            api_part = f" | رقم API: {api_no}" if api_no else ""
+            cat_ara = {"smm":"سوشيال", "pubg":"ببجي", "itunes":"آيتونز", "telegram":"تليجرام"}.get(cat, cat or "-")
+            lines.append(f"#{oid} • {cat_ara} • {service} • {price}$ • {status} • {when}{end}{api_part}")
+        # أزرار تنقل
+        nav = []
+        if offset > 0:
+            prev_off = max(0, offset-10)
+            nav.append(InlineKeyboardButton("⬅️ السابق", callback_data=f"my_orders_page_{prev_off}"))
+        if offset + 10 < total:
+            next_off = offset + 10
+            nav.append(InlineKeyboardButton("التالي ➡️", callback_data=f"my_orders_page_{next_off}"))
+        buttons = [nav] if nav else []
+        buttons.append([InlineKeyboardButton("رجوع", callback_data="back_main")])
+        query.edit_message_text("سجل طلباتك:\n\n" + "\n".join(lines), reply_markup=InlineKeyboardMarkup(buttons))
+        return
+
+    # شحن عبر آسياسيل
+    if data == "charge_asiacell":
+        context.user_data["waiting_for_card"] = True
+        query.edit_message_text("أرسل رقم الكارت المكون من 14 أو 16 رقم (يمكنك لصقه كما هو):")
+        return
+
+    # شحن عبر طرق أخرى
+    if data in ("charge_superkey", "charge_zaincash", "charge_usdt", "charge_cent_points", "charge_helabi"):
+        msg = f"لإتمام عملية الشحن تواصل مع الدعم الفني عبر الضغط هنا👈🏻 {SUPPORT_CONTACT}"
+        query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="back_main")]]))
+        return
+
+    # ========== لوحة المالك ==========
+    if data == "admin_menu":
+        if user_id == ADMIN_ID:
+            query.edit_message_text("لوحة تحكم المالك:", reply_markup=admin_menu_keyboard())
+        else:
+            query.edit_message_text("عذراً، أنت لست المالك.")
+        return
+
+    if user_id == ADMIN_ID:
+        # ======= محرر أكواد الخدمات \(API\) =======
+
+
+# ======= الأسعار والكميات (لوحة المالك) =======
+if data == "admin_price_qty":
+    kb = [
+        [InlineKeyboardButton("سوشيال (SMM)", callback_data="prq_cat_smm")],
+        [InlineKeyboardButton("ببجي", callback_data="prq_cat_pubg"), InlineKeyboardButton("آيتونز", callback_data="prq_cat_itunes")],
+        [InlineKeyboardButton("تليجرام", callback_data="prq_cat_telegram"), InlineKeyboardButton("لودو", callback_data="prq_cat_ludo")],
+        [InlineKeyboardButton("رجوع", callback_data="admin_menu")]
+    ]
+    query.edit_message_text("اختر القسم الذي تريد تعديل أسعاره/كمياته:", reply_markup=InlineKeyboardMarkup(kb))
+    return
+
+if data.startswith("prq_cat_"):
+    cat = data.split("_", 2)[-1]
+    context.user_data["__prq_cat__"] = cat
+    context.user_data["__prq_list__"] = _prq_list_services(cat)
+    query.edit_message_text(_prq_render_page(context, 0), reply_markup=_prq_page_kb(0))
+    return
+
+if data.startswith("prq_page_"):
+    try:
+        _, _, off = data.split("_", 2)
+        off = int(off)
+    except Exception:
+        off = 0
+    query.edit_message_text(_prq_render_page(context, off), reply_markup=_prq_page_kb(off))
+    return
+
+if data.startswith("prq_pick_"):
+    idx = int(data.split("_")[-1])
+    cat = context.user_data.get("__prq_cat__") or "smm"
+    lst = context.user_data.get("__prq_list__", [])
+    if idx < 0 or idx >= len(lst):
+        query.answer("العنصر غير موجود.", show_alert=True); return
+    name, base_price = lst[idx]
+    context.user_data["__prq_pick_idx__"] = idx
+    query.edit_message_text(_prq_render_item(cat, name, base_price), reply_markup=_prq_item_kb(cat, idx))
+    return
+
+if data.startswith("prq_edit_price_"):
+    idx = int(data.split("_")[-1])
+    lst = context.user_data.get("__prq_list__", [])
+    if idx < 0 or idx >= len(lst):
+        query.answer("غير موجود.", show_alert=True); return
+    name, _ = lst[idx]
+    context.user_data["waiting_edit_price_for"] = name
+    query.edit_message_text(f"✏️ أرسل السعر الجديد بالدولار للخدمة:\n{name}\nمثال: 3.75\n\nأرسل 'الغاء' للإلغاء.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data=f"prq_pick_{idx}")]]))
+    return
+
+if data.startswith("prq_edit_qty_"):
+    idx = int(data.split("_")[-1])
+    lst = context.user_data.get("__prq_list__", [])
+    if idx < 0 or idx >= len(lst):
+        query.answer("غير موجود.", show_alert=True); return
+    name, _ = lst[idx]
+    context.user_data["waiting_edit_qty_for"] = name
+    query.edit_message_text(f"✏️ أرسل الكمية الجديدة (quantity_multiplier) للخدمة:\n{name}\nمثال: 5000\n\nأرسل 'الغاء' للإلغاء.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data=f"prq_pick_{idx}")]]))
+    return
+
+if data.startswith("prq_del_price_"):
+    idx = int(data.split("_")[-1])
+    lst = context.user_data.get("__prq_list__", [])
+    if idx < 0 or idx >= len(lst):
+        query.answer("غير موجود.", show_alert=True); return
+    name, _ = lst[idx]
+    db_delete_price_override(name)
+    query.answer("تم حذف السعر المخصص.")
+    query.edit_message_text("تم حذف السعر المخصص. اختر العملية:", reply_markup=_prq_item_kb(context.user_data.get("__prq_cat__","smm"), idx))
+    return
+
+# ======= محرر أكواد الخدمات (API) =======
+        if data == "admin_service_codes":
+            pairs = build_service_groups()
+            if not pairs:
+                query.edit_message_text("لا توجد خدمات معرّفة حالياً.")
+                return
+            kb = []; names = []; display = ["🛠️ اختر مجموعة لتعديل كود الـAPI لها (أرسل رقمًا واحدًا فقط):\n"]
+            for idx, (gname, services) in enumerate(pairs):
+                names.append((gname, services))
+                display.append(f"{idx+1}) {gname} — {len(services)} خدمة")
+                kb.append([InlineKeyboardButton(f"تعديل: {gname}", callback_data=f"edit_group_{idx}")])
+            kb.append([InlineKeyboardButton("رجوع", callback_data="admin_menu")])
+            context.user_data["__groups__"] = names
+            query.edit_message_text("\n".join(display), reply_markup=InlineKeyboardMarkup(kb))
+            return
+
+        if data.startswith("edit_group_"):
+            try:
+                idx = int(data.split("_")[-1])
+            except Exception:
+                query.answer("خطأ في الفهرس.", show_alert=True); return
+            groups = context.user_data.get("__groups__") or build_service_groups()
+            if idx < 0 or idx >= len(groups):
+                query.answer("العنصر غير موجود.", show_alert=True); return
+            gname, services = groups[idx]
+            context.user_data["__target_services__"] = services
+            context.user_data["waiting_for_bulk_service_code"] = True
+            txt = (f"📝 تعديل كود الـAPI للمجموعة: {gname}\n"
+                   f"عدد الخدمات: {len(services)}\n\n"
+                   f"أرسل الآن <b>رقم كود الـAPI</b> فقط (مثال: <code>13912</code>)، وسيتم تعيينه لكل الخدمات في هذه المجموعة.")
+            query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_service_codes")]]), parse_mode="HTML")
+            return
+
+        # ======= لوحة إحالات المالك =======
+        if data == "admin_referrals":
+            ov = db_get_admin_ref_overview()
+            lines = ["📊 لوحة الإحالات (إدارة)\n",
+                     f"إجمالي الإحالات: {ov.get('total_refs',0)}",
+                     f"إجمالي العمولات المدفوعة: {ov.get('total_paid',0):.2f}$", "", "أفضل 10 مُحيلين:"]
+            for row in ov.get("top", []):
+                inviter_id_i, full_name_i, username_i, cnt_i, paid_cnt_i = row
+                uname = f"@{username_i}" if username_i else "—"
+                lines.append(f'- <a href="tg://user?id:{inviter_id_i}">{full_name_i}</a> | {uname} | ID:{inviter_id_i} — دعا {cnt_i} مستخدم (مدفوعة: {paid_cnt_i})')
+            query.edit_message_text("\n".join(lines), reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_menu")]]), parse_mode="HTML")
+            return
+        # طلبات الخدمات المعلّقة (سوشيال/تلي)
+        if data == "pending_smm_orders":
+            pend = db_get_pending_orders(category_filter=["smm"])
+            if not pend:
+                query.edit_message_text("لا توجد طلبات خدمات معلّقة حالياً.",
+                                        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_menu")]]))
+            else:
+                text_msg = "الطلبات المعلّقة (الخدمات):\n\n"
+                kb = []
+                for (oid, uid, fn, un, cat, service, price, link, ts) in pend:
+                    text_msg += (f"{oid}) {fn} (@{un})\n"
+                                 f"   الخدمة: {service} | السعر: {price}$\n"
+                                 f"   الرابط: {link}\n\n")
+                    kb.append([
+                        InlineKeyboardButton(f"✅ تنفيذ #{oid}", callback_data=f"approve_smm_id_{oid}"),
+                        InlineKeyboardButton(f"❌ رفض #{oid}", callback_data=f"reject_smm_id_{oid}")
+                    ])
+                kb.append([InlineKeyboardButton("رجوع", callback_data="admin_menu")])
+                query.edit_message_text(text_msg, reply_markup=InlineKeyboardMarkup(kb))
+            return
+
+        if data.startswith("approve_smm_id_"):
+            try:
+                order_id = int(data.split("_")[-1])
+            except Exception:
+                query.answer("رقم طلب غير صالح.", show_alert=True)
+                return
+            approve_order_process_db(order_id, context, query)
+            return
+
+        if data.startswith("reject_smm_id_"):
+            try:
+                order_id = int(data.split("_")[-1])
+            except Exception:
+                query.answer("تعذر إيجاد الطلب.", show_alert=True)
+                return
+            row = _exec("""SELECT user_id, price FROM orders WHERE id=%s AND status='pending'""", (order_id,), "one")
+            if not row:
+                query.answer("الطلب غير موجود.", show_alert=True)
+                return
+            uid, amount = row
+            db_refund_order(order_id, uid, float(amount))
+            try:
+                context.bot.send_message(chat_id=uid, text="تم إلغاء طلبك وإعادة المبلغ إلى رصيدك.")
+            except Exception:
+                pass
+            query.edit_message_text("تم رفض الطلب وإرجاع الرصيد.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="pending_smm_orders")]]))
+            return
+
+        if data == "block_user":
+            query.edit_message_text("أرسل اليوزرنيم أو الآيدي للمستخدم الذي تريد حضره:")
+            context.user_data["waiting_for_block"] = True
+            return
+
+        if data == "unblock_user":
+            bl = list_blocked_users()
+            if not bl:
+                query.edit_message_text("لا يوجد مستخدمين محظورين.")
+            else:
+                text = "قائمة المستخدمين المحظورين:\n"
+                keyboard = []
+                for (uid, until, rsn) in bl:
+                    userrow = get_user_from_db(uid)
+                    user_display = f"{userrow[1]} (@{userrow[2]})" if userrow else f"User {uid}"
+                    text += f"{user_display} (ID: {uid}) — حتى: {until}\n"
+                    keyboard.append([InlineKeyboardButton(f"إلغاء حظر {user_display}", callback_data=f"unblock_{uid}")])
+                keyboard.append([InlineKeyboardButton("رجوع", callback_data="admin_menu")])
+                query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+            return
+
+        if data.startswith("unblock_"):
+            try:
+                target_id = int(data.split("_")[1])
+            except Exception:
+                query.edit_message_text("حدث خطأ في بيانات المستخدم.")
+                return
+            unblock_user(target_id)
+            try:
+                context.bot.send_message(chat_id=target_id, text="✅ تم إلغاء حظرك. يمكنك استخدام البوت الآن.")
+            except Exception:
+                pass
+            query.edit_message_text("تم إلغاء حظر المستخدم بنجاح.")
+            return
+
+        if data == "admin_add_balance":
+            query.edit_message_text("أرسل الآن آيدي المستخدم الذي تريد إضافة الرصيد له:")
+            context.user_data["waiting_for_add_balance_user_id"] = True
+            return
+        if data == "admin_discount":
+            query.edit_message_text("أرسل الآن آيدي المستخدم (رقم) أو اليوزر @username لبدء خصم الرصيد:")
+            context.user_data["waiting_for_discount_user_id"] = True
+            return
+
+        if data == "admin_discounts_info":
+            try:
+                query.edit_message_text(
+                    get_mod_discount_help_text(),
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_menu")]])
+                )
+            except Exception:
+                context.bot.send_message(chat_id=update.effective_chat.id, text=get_mod_discount_help_text(), parse_mode="HTML")
+            return
+        if data == "admin_announce":
+            query.edit_message_text("أرسل الآن الرسالة أو الوسائط (صورة/فيديو/تسجيل صوتي/نص) لإعلان البوت لجميع المستخدمين:")
+            context.user_data["waiting_for_broadcast"] = True
+            return
+
+        if data == "admin_users_count":
+            users = get_all_users()
+            text_msg = f"عدد المستخدمين: {len(users)}\n\n"
+            for i, usr in enumerate(users, start=1):
+                text_msg += f"{i}) الاسم: {usr[1]}, يوزر: @{usr[2]}, أيدي: {usr[0]}\n"
+            query.edit_message_text(text_msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_menu")]]))
+            return
+
+        if data == "admin_users_balance":
+            users = get_users_with_balance_desc()
+            if not users:
+                text_msg = "لا يوجد مستخدمون لديهم رصيد > 0."
+            else:
+                text_msg = "مستخدمو البوت (رصيد > 0) - ترتيب تنازلي:\n\n"
+                for i, usr in enumerate(users, start=1):
+                    text_msg += f"{i}) الاسم: {usr[1]}, يوزر: @{usr[2]}, الرصيد: {usr[3]}$, أيدي: {usr[0]}\n"
+            query.edit_message_text(text_msg, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_menu")]]))
+            return
+
+        # الطلبات المكتملة عبر API
+        if data == "review_orders":
+            rows = db_get_completed_api_orders()
+            if not rows:
+                query.edit_message_text("لا توجد طلبات تم تنفيذها عبر API.",
+                                        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_menu")]]))
+                return
+            keyboard = []
+            text_msg = "الطلبات المكتملة عبر API:\n\n"
+            for (oid, uid, fn, un, service, price, api_no) in rows:
+                text_msg += f"- #{oid} | {fn} | {service} | {price}$ | رقم الطلب: {api_no}\n"
+                keyboard.append([
+                    InlineKeyboardButton("اشعار المستخدم", callback_data=f"notify_order_{oid}"),
+                    InlineKeyboardButton("ارجاع الرصيد", callback_data=f"refund_order_{oid}"),
+                    InlineKeyboardButton("🗑️ حذف الطلب", callback_data=f"delete_order_{oid}")
+                ])
+            keyboard.append([InlineKeyboardButton("رجوع", callback_data="admin_menu")])
+            query.edit_message_text(text_msg, reply_markup=InlineKeyboardMarkup(keyboard))
+            return
+
+        if data.startswith("notify_order_"):
+            try:
+                oid = int(data.split("_")[-1])
+            except:
+                query.answer("خطأ في رقم الطلب", show_alert=True); return
+            row = _exec("SELECT user_id FROM orders WHERE id=%s", (oid,), "one")
+            if not row:
+                query.answer("طلب غير موجود", show_alert=True); return
+            try:
+                context.bot.send_message(chat_id=row[0], text="تم تنفيذ طلبك بنجاح")
+            except Exception as e:
+                logger.error("notify err: %s", e)
+            query.answer("تم إرسال إشعار للمستخدم", show_alert=True)
+            return
+
+        if data.startswith("refund_order_"):
+            try:
+                oid = int(data.split("_")[-1])
+            except:
+                query.edit_message_text("طلب غير موجود."); return
+            row = _exec("SELECT user_id, price, status, refunded FROM orders WHERE id=%s", (oid,), "one")
+            if not row:
+                query.edit_message_text("طلب غير موجود."); return
+            uid, amount, status, refunded = row
+            if refunded:
+                query.answer("تم ارجاع الرصيد مسبقاً.", show_alert=True); return
+            db_refund_order(oid, uid, float(amount))
+            try:
+                context.bot.send_message(chat_id=uid, text=f"تم استعادة رصيدك المخصوم ({amount}$)")
+            except Exception:
+                pass
+            query.edit_message_text("تمت العملية.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_menu")]]))
+            return
+
+        if data.startswith("delete_order_"):
+            try:
+                oid = int(data.split("_")[-1])
+            except:
+                query.answer("تعذر حذف هذا الطلب.", show_alert=True); return
+            db_delete_order(oid)
+            query.data = "review_orders"
+            button_handler(update, context)
+            return
+
+        # إدارة كروت الشحن
+        if data == "pending_cards":
+            rows = db_get_pending_cards()
+            if not rows:
+                query.edit_message_text("لا توجد كروت معلقة حالياً.",
+                                        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_menu")]]))
+            else:
+                text_msg = "الكروت المعلقة:\n"
+                buttons = []
+                for (cid, uid, fn, un, card_number, submitted_at) in rows:
+                    text_msg += f"#{cid}) @{un} - كارت معلق\n"
+                    buttons.append([InlineKeyboardButton(f"معالجة الكارت #{cid}", callback_data=f"process_card_{cid}")])
+                buttons.append([InlineKeyboardButton("رجوع", callback_data="admin_menu")])
+                query.edit_message_text(text_msg, reply_markup=InlineKeyboardMarkup(buttons))
+            return
+
+        if data.startswith("process_card_"):
+            cid = int(data.split("_")[-1])
+            card = db_get_card(cid)
+            if not card:
+                query.edit_message_text("الكارت غير موجود."); return
+            _, uid, fn, un, number, ts, status, amount = card
+            text_msg = (
+                f"تفاصيل الكارت #{cid}:\n"
+                f"- المعرف: {uid}\n- الاسم: {fn}\n- يوزر: @{un}\n"
+                f"- رقم الكارت: اضغط زر (إظهار الرقم) أدناه.\n\nاختر الإجراء:"
+            )
+            btns = [
+                [InlineKeyboardButton("إظهار الرقم", callback_data=f"show_card_{cid}")],
+                [InlineKeyboardButton("قبول الكارت", callback_data=f"approve_card_{cid}"),
+                 InlineKeyboardButton("رفض الكارت", callback_data=f"reject_card_{cid}")],
+                [InlineKeyboardButton("رجوع", callback_data="pending_cards")]
+            ]
+            query.edit_message_text(text_msg, reply_markup=InlineKeyboardMarkup(btns))
+            return
+
+        if data.startswith("show_card_"):
+            cid = int(data.split("_")[-1])
+            card = db_get_card(cid)
+            if not card:
+                query.message.reply_text("الكارت غير موجود."); return
+            number = card[4]
+            query.message.reply_text(text=f"رقم الكارت:\n`{number}`\n(اضغط مطولاً للنسخ)", parse_mode="Markdown")
+            return
+
+        if data.startswith("approve_card_"):
+            cid = int(data.split("_")[-1])
+            # اطلب المبلغ
+            query.edit_message_text("أرسل الآن المبلغ المراد شحنه للمستخدم (بالدولار):",
+                                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="pending_cards")]]))
+            context.user_data["card_to_approve_id"] = cid
+            context.user_data["waiting_for_amount"] = True
+            return
+
+        if data.startswith("reject_card_"):
+            cid = int(data.split("_")[-1])
+            card = db_get_card(cid)
+            if card:
+                db_reject_card(cid)
+                try:
+                    context.bot.send_message(chat_id=card[1], text="تم رفض الشحن لأن رقم الكارت غير صحيح.")
+                except Exception:
+                    pass
+            query.edit_message_text("تم رفض الكارت بنجاح.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="pending_cards")]]))
+            return
+
+        # طلبات ببجي
+        if data == "pending_pubg_orders":
+            pend = _exec("""SELECT id, user_id, full_name, username, service, price,
+                                   COALESCE(payload->>'pubg_id','') AS pubg_id
+                            FROM orders
+                            WHERE status='pending' AND category='pubg'
+                            ORDER BY ordered_at ASC""", fetch="all") or []
+            if not pend:
+                query.edit_message_text("لا توجد طلبات شدات ببجي معلقة حالياً.",
+                                        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_menu")]]))
+            else:
+                text_msg = "طلبات شدات ببجي المعلقة:\n"
+                buttons = []
+                for (oid, uid, fn, un, service, price, pubg_id) in pend:
+                    text_msg += f"#{oid}) @{un} - الخدمة: {service}, الآيدي: {pubg_id}\n"
+                    buttons.append([InlineKeyboardButton(f"معالجة الطلب #{oid}", callback_data=f"process_pubg_order_{oid}")])
+                buttons.append([InlineKeyboardButton("رجوع", callback_data="admin_menu")])
+                query.edit_message_text(text_msg, reply_markup=InlineKeyboardMarkup(buttons))
+            return
+
+        if data.startswith("process_pubg_order_"):
+            oid = int(data.split("_")[-1])
+            row = _exec("""SELECT id, user_id, full_name, username, service, price, payload
+                           FROM orders WHERE id=%s""", (oid,), "one")
+            if not row:
+                query.edit_message_text("الطلب غير موجود."); return
+            _, uid, fn, un, service, price, payload = row
+            pubg_id = (payload or {}).get("pubg_id") if isinstance(payload, dict) else None
+            text_msg = (
+                f"تفاصيل طلب شحن شدات ببجي #{oid}:\n"
+                f"- المعرف: {uid}\n- الاسم: {fn}\n- يوزر: @{un}\n"
+                f"- الخدمة: {service}\n- السعر: {price}$\n- الآيدي: {pubg_id}\n\n"
+                "اختر الإجراء:"
+            )
+            btns = [
+                [InlineKeyboardButton("تم شحن الشدات", callback_data=f"approve_pubg_order_{oid}"),
+                 InlineKeyboardButton("تم الغاء شحن الشدات", callback_data=f"reject_pubg_order_{oid}")],
+                [InlineKeyboardButton("انتظار المستخدم", callback_data=f"user_wait_pubg_order_{oid}")],
+                [InlineKeyboardButton("رجوع", callback_data="pending_pubg_orders")]
+            ]
+            query.edit_message_text(text_msg, reply_markup=InlineKeyboardMarkup(btns))
+            return
+
+        if data.startswith("approve_pubg_order_"):
+            oid = int(data.split("_")[-1])
+            _exec("UPDATE orders SET status='completed', completed_at=NOW() WHERE id=%s", (oid,))
+            row = _exec("SELECT user_id FROM orders WHERE id=%s", (oid,), "one")
+            if row:
+                try: context.bot.send_message(chat_id=row[0], text="تم شحن شدات ببجي بنجاح.")
+                except Exception: pass
+            query.edit_message_text("تم شحن شدات ببجي وإشعار المستخدم.",
+                                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="pending_pubg_orders")]]))
+            return
+
+        if data.startswith("reject_pubg_order_"):
+            oid = int(data.split("_")[-1])
+            row = _exec("SELECT user_id, price FROM orders WHERE id=%s", (oid,), "one")
+            if row:
+                db_refund_order(oid, row[0], float(row[1]))
+                try: context.bot.send_message(chat_id=row[0], text="تم إلغاء طلب شحن شدات ببجي وإعادة المبلغ إلى حسابك.")
+                except Exception: pass
+            query.edit_message_text("تم إلغاء طلب شحن شدات ببجي وإعادة المبلغ للمستخدم.",
+                                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="pending_pubg_orders")]]))
+            return
+
+        if data.startswith("user_wait_pubg_order_"):
+            oid = int(data.split("_")[-1])
+            row = _exec("SELECT user_id FROM orders WHERE id=%s", (oid,), "one")
+            if row:
+                try: context.bot.send_message(chat_id=row[0], text="سوف يتم تنفيذ طلبك قريبا")
+                except Exception: pass
+            query.edit_message_text("تم إرسال إشعار الانتظار للمستخدم.",
+                                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="pending_pubg_orders")]]))
+            return
+
+        if data == "api_check_balance":
+            api_check_balance(update, context); return
+
+        if data == "api_order_status":
+            query.edit_message_text("أدخل رقم الطلب للتحقق من حالته عبر API:")
+            context.user_data["waiting_for_api_order_status"] = True
+            return
+
+        # طلبات لودو
+        if data == "pending_ludo_orders":
+            pend = _exec("""SELECT id, user_id, full_name, username, service, price,
+                                   COALESCE(payload->>'ludo_id','') AS ludo_id
+                            FROM orders
+                            WHERE status='pending' AND category='ludo'
+                            ORDER BY ordered_at ASC""", fetch="all") or []
+            if not pend:
+                query.edit_message_text("لا توجد طلبات لودو معلقة حالياً.",
+                                        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_menu")]]))
+            else:
+                text_msg = "طلبات لودو المعلقة:\n"
+                buttons = []
+                for (oid, uid, fn, un, service, price, ludo_id) in pend:
+                    user_line = f"{fn} (@{un})" if un else f"{fn}"
+                    text_msg += f"#{oid}) {user_line} - الخدمة: {service}, الآيدي: {ludo_id}\n"
+                    buttons.append([InlineKeyboardButton(f"معالجة الطلب #{oid}", callback_data=f"process_ludo_order_{oid}")])
+                buttons.append([InlineKeyboardButton("رجوع", callback_data="admin_menu")])
+                query.edit_message_text(text_msg, reply_markup=InlineKeyboardMarkup(buttons))
+            return
+
+        if data.startswith("process_ludo_order_"):
+            oid = int(data.split("_")[-1])
+            row = _exec("""SELECT id, user_id, full_name, username, service, price, payload
+                           FROM orders WHERE id=%s""", (oid,), "one")
+            if not row:
+                query.edit_message_text("الطلب غير موجود."); return
+            _, uid, fn, un, service, price, payload = row
+            ludo_id = (payload or {}).get("ludo_id") if isinstance(payload, dict) else None
+            text_msg = (
+                f"تفاصيل طلب لودو #{oid}:\n"
+                f"- المعرف: {uid}\n- الاسم: {fn}\n- يوزر: @{un}\n"
+                f"- الخدمة: {service}\n- السعر: {price}$\n- آيدي لودو: {ludo_id}\n\n"
+                "اختر الإجراء:"
+            )
+            btns = [
+                [InlineKeyboardButton("تم تنفيذ لودو", callback_data=f"approve_ludo_order_{oid}")],
+                [InlineKeyboardButton("رفض الطلب", callback_data=f"reject_ludo_order_{oid}")],
+                [InlineKeyboardButton("انتظار المستخدم", callback_data=f"user_wait_ludo_order_{oid}")],
+                [InlineKeyboardButton("رجوع", callback_data="pending_ludo_orders")]
+            ]
+            query.edit_message_text(text_msg, reply_markup=InlineKeyboardMarkup(btns))
+            return
+
+        if data.startswith("approve_ludo_order_"):
+            oid = int(data.split("_")[-1])
+            _exec("UPDATE orders SET status='completed', completed_at=NOW() WHERE id=%s", (oid,))
+            row = _exec("SELECT user_id FROM orders WHERE id=%s", (oid,), "one")
+            if row:
+                try: context.bot.send_message(chat_id=row[0], text="تم تنفيذ طلب لودو بنجاح.")
+                except Exception: pass
+            query.edit_message_text("تم تنفيذ طلب لودو وإشعار المستخدم.",
+                                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="pending_ludo_orders")]]))
+            return
+
+        if data.startswith("reject_ludo_order_"):
+            oid = int(data.split("_")[-1])
+            row = _exec("SELECT user_id, price FROM orders WHERE id=%s", (oid,), "one")
+            if row:
+                db_refund_order(oid, row[0], float(row[1]))
+                try: context.bot.send_message(chat_id=row[0], text="تم إلغاء طلب لودو وإعادة المبلغ إلى حسابك.")
+                except Exception: pass
+            query.edit_message_text("تم إلغاء طلب لودو وإعادة المبلغ للمستخدم.",
+                                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="pending_ludo_orders")]]))
+            return
+
+        if data.startswith("user_wait_ludo_order_"):
+            oid = int(data.split("_")[-1])
+            row = _exec("SELECT user_id FROM orders WHERE id=%s", (oid,), "one")
+            if row:
+                try: context.bot.send_message(chat_id=row[0], text="سوف يتم تنفيذ طلبك لودو قريبًا.")
+                except Exception: pass
+            query.edit_message_text("تم إرسال إشعار الانتظار للمستخدم.",
+                                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="pending_ludo_orders")]]))
+            return
+    
+        # طلبات ايتونز
+        if data == "pending_itunes_orders":
+            pend = _exec("""SELECT id, user_id, full_name, username, service, price
+                            FROM orders WHERE status='pending' AND category='itunes'
+                            ORDER BY ordered_at ASC""", fetch="all") or []
+            if not pend:
+                query.edit_message_text("لا توجد طلبات شحن ايتونز معلقة حالياً.",
+                                        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="admin_menu")]]))
+            else:
+                text_msg = "طلبات شحن الايتونز المعلقة:\n"
+                buttons = []
+                for (oid, uid, fn, un, service, price) in pend:
+                    text_msg += f"#{oid}) @{un} - {service} بسعر {price}$\n"
+                    buttons.append([InlineKeyboardButton(f"معالجة الطلب #{oid}", callback_data=f"process_itunes_{oid}")])
+                buttons.append([InlineKeyboardButton("رجوع", callback_data="admin_menu")])
+                query.edit_message_text(text_msg, reply_markup=InlineKeyboardMarkup(buttons))
+            return
+
+        if data.startswith("process_itunes_"):
+            oid = int(data.split("_")[-1])
+            row = _exec("""SELECT id, user_id, full_name, username, service, price
+                           FROM orders WHERE id=%s""", (oid,), "one")
+            if not row:
+                query.edit_message_text("طلب غير موجود."); return
+            _, uid, fn, un, service, price = row
+            text_msg = (
+                f"تفاصيل طلب شحن ايتونز #{oid}:\n"
+                f"- المعرف: {uid}\n- الاسم: {fn}\n- يوزر: @{un}\n"
+                f"- الخدمة: {service}\n- السعر: {price}$\n\n"
+                "اختر الإجراء:"
+            )
+            btns = [
+                [InlineKeyboardButton("انتظار المستخدم", callback_data=f"itunes_wait_{oid}")],
+                [InlineKeyboardButton("اكمال الطلب", callback_data=f"itunes_complete_{oid}")],
+                [InlineKeyboardButton("الغاء الطلب", callback_data=f"itunes_cancel_{oid}")],
+                [InlineKeyboardButton("رجوع", callback_data="pending_itunes_orders")]
+            ]
+            query.edit_message_text(text_msg, reply_markup=InlineKeyboardMarkup(btns))
+            return
+
+        if data.startswith("itunes_wait_"):
+            oid = int(data.split("_")[-1])
+            row = _exec("SELECT user_id FROM orders WHERE id=%s", (oid,), "one")
+            if row:
+                try: context.bot.send_message(chat_id=row[0], text="سوف يتم ارسال كود الهدايا قريبا")
+                except Exception: pass
+            query.edit_message_text("تم إرسال إشعار الانتظار للمستخدم.",
+                                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="pending_itunes_orders")]]))
+            return
+
+        if data.startswith("itunes_complete_"):
+            oid = int(data.split("_")[-1])
+            query.edit_message_text("أرسل الآن كود الهدايا الايتونز:",
+                                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="pending_itunes_orders")]]))
+            context.user_data["itunes_to_complete_id"] = oid
+            context.user_data["waiting_for_itunes_code"] = True
+            return
+
+        if data.startswith("itunes_cancel_"):
+            oid = int(data.split("_")[-1])
+            row = _exec("SELECT user_id, price FROM orders WHERE id=%s", (oid,), "one")
+            if row:
+                db_refund_order(oid, row[0], float(row[1]))
+                try: context.bot.send_message(chat_id=row[0], text="تم إلغاء طلب شحن الايتونز وإعادة المبلغ لرصيدك.")
+                except Exception: pass
+            query.edit_message_text("تم إلغاء طلب شحن الايتونز وإعادة المبلغ للمستخدم.",
+                                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="pending_itunes_orders")]]))
+            return
+
+        # إدارة المشرفين
+        if data == "manage_mods":
+            query.edit_message_text("إدارة المشرفين:", reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("➕ إضافة مشرف", callback_data="add_mod")],
+                [InlineKeyboardButton("➖ حذف مشرف", callback_data="remove_mod")],
+                [InlineKeyboardButton("👥 عرض المشرفين", callback_data="list_mods")],
+                [InlineKeyboardButton("رجوع", callback_data="admin_menu")]
+            ]))
+            return
+
+        if data == "add_mod":
+            query.edit_message_text("أرسل الآن آيدي المستخدم أو يوزر @username لإضافته كمشرف:")
+            context.user_data["waiting_for_new_mod"] = True
+            return
+
+        if data == "remove_mod":
+            query.edit_message_text("أرسل الآن آيدي المستخدم أو يوزر @username لحذفه من المشرفين:")
+            context.user_data["waiting_for_remove_mod"] = True
+            return
+
+        if data == "list_mods":
+            mods = list_moderators()
+            if not mods:
+                query.edit_message_text("لا يوجد مشرفون حالياً.", reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("➕ إضافة مشرف", callback_data="add_mod")],
+                    [InlineKeyboardButton("رجوع", callback_data="admin_menu")]
+                ]))
+                return
+            txt = f"👥 عدد المشرفين: {len(mods)}\n\n"
+            for i, (mid, fn, un) in enumerate(mods, start=1):
+                txt += f"{i}) {fn} (@{un}) - ID: {mid}\n"
+            query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="manage_mods")]]))
+            return
+
+    # ========== لوحة المشرف ==========
+    if data == "moderator_menu":
+        if is_moderator(user_id):
+            query.edit_message_text("لوحة تحكم المشرف:", reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("مراجعة الطلبات المعلقة", callback_data="mod_review_pending")],
+                [InlineKeyboardButton("إحصائيات الطلبات", callback_data="mod_stats")],
+                [InlineKeyboardButton("شرح الخصومات", callback_data="mod_discounts_info")],
+                [InlineKeyboardButton("رجوع", callback_data="back_main")],
+            ]))
+        else:
+            query.edit_message_text("هذه الميزة مخصصة للمشرفين فقط.")
+        return
+
+    if data == "mod_review_pending":
+        if not is_moderator(user_id):
+            query.edit_message_text("هذه الميزة مخصصة للمشرفين فقط."); return
+        pend_counts = _exec("""SELECT
+                                (SELECT COUNT(*) FROM orders WHERE status='pending' AND category='smm') AS smm,
+                                (SELECT COUNT(*) FROM orders WHERE status='pending' AND category='pubg') AS pubg,
+                                (SELECT COUNT(*) FROM cards  WHERE status='pending') AS cards,
+                                (SELECT COUNT(*) FROM orders WHERE status='pending' AND category='itunes') AS itunes
+                               """, fetch="one")
+        smm, pubg_cnt, cards_cnt, itunes_cnt = pend_counts
+        total = (smm or 0)+(pubg_cnt or 0)+(cards_cnt or 0)+(itunes_cnt or 0)
+        txt = ( "📮 الطلبات المعلقة:\n"
+                f"- إجمالي المعلّقة: {total}\n"
+                f"- العادية: {smm}\n"
+                f"- شدات ببجي: {pubg_cnt}\n"
+                f"- كروت الشحن: {cards_cnt}\n"
+                f"- الايتونز: {itunes_cnt}\n\n"
+                "يمكنك إشعار المالك الآن لمراجعتها." )
+        kb = [[InlineKeyboardButton("🔔 إشعار المالك بالمراجعة", callback_data="mod_ping_owner")],
+              [InlineKeyboardButton("رجوع", callback_data="moderator_menu")]]
+        query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kb))
+        return
+
+    if data == "mod_ping_owner":
+        if not is_moderator(user_id):
+            query.edit_message_text("هذه الميزة مخصصة للمشرفين فقط."); return
+        cnt = _exec("SELECT COUNT(*) FROM orders WHERE status='pending'", fetch="one")[0]
+        try:
+            context.bot.send_message(chat_id=ADMIN_ID,
+                text=("🔔 إشعار من أحد المشرفين لمراجعة الطلبات المعلقة.\n"
+                      f"المشرف: {update.effective_user.full_name} (@{update.effective_user.username or 'NoUsername'})\n"
+                      f"إجمالي المعلّقة الآن: {cnt}"))
+            query.edit_message_text("تم إشعار المالك. شكراً لك.",
+                                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="moderator_menu")]]))
+        except Exception as e:
+            logger.error("mod_ping_owner error: %s", e)
+            query.edit_message_text("تعذر إشعار المالك حالياً.",
+                                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="moderator_menu")]]))
+        return
+
+    if data == "mod_stats":
+        if not is_moderator(user_id):
+            query.edit_message_text("هذه الميزة مخصصة للمشرفين فقط."); return
+        completed = _exec("SELECT COUNT(*) FROM orders WHERE status='completed'", fetch="one")[0]
+        ongoing = _exec("SELECT COUNT(*) FROM orders WHERE status='completed' AND refunded=FALSE", fetch="one")[0]
+        pending_total = _exec("SELECT COUNT(*) FROM orders WHERE status='pending'", fetch="one")[0]
+        canceled_est = _exec("SELECT COUNT(*) FROM orders WHERE refunded=TRUE", fetch="one")[0]
+        txt = ( "📊 إحصائيات الطلبات:\n"
+                f"- مكتملة: {completed}\n"
+                f"- جارية: {ongoing}\n"
+                f"- معلّقة: {pending_total}\n"
+                f"- ملغاة/مسترجعة: {canceled_est}" )
+        query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="moderator_menu")]]))
+        return
+
+    if data == "mod_discounts_info":
+        if not is_moderator(user_id):
+            query.edit_message_text("هذه الميزة مخصصة للمشرفين فقط."); return
+        try:
+            query.edit_message_text(
+                get_mod_discount_help_text(),
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data="moderator_menu")]])
+            )
+        except Exception:
+            context.bot.send_message(chat_id=update.effective_chat.id, text=get_mod_discount_help_text(), parse_mode="HTML")
+        return
+
+# =========================
+# استقبال الرسائل (Message)
+# =========================
 def handle_messages(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     ban_msg = _is_user_blocked_now(user_id)
@@ -1466,7 +2441,40 @@ def handle_messages(update: Update, context: CallbackContext):
         update.message.reply_text("تم حذف المشرف بنجاح." if ok else "لم يتم العثور على المشرف المحدد.")
         return
 
-    # ======== شحن آسياسيل (المستخدم) + حماية ========
+    
+
+# ======== تعديل السعر/الكمية (المالك) ========
+if user_id == ADMIN_ID and context.user_data.get("waiting_edit_price_for"):
+    name = context.user_data.pop("waiting_edit_price_for", None)
+    if text.strip().lower() in ("الغاء", "إلغاء", "cancel"):
+        update.message.reply_text("تم الإلغاء.")
+        return
+    try:
+        price = float(text.strip().replace(",", "."))
+    except Exception:
+        update.message.reply_text("❌ صيغة السعر غير صحيحة. مثال صحيح: 3.75")
+        return
+    db_set_price_override(name, price)
+    update.message.reply_text(f"✅ تم تحديث سعر الخدمة:\n{name}\nالسعر الجديد: {price}$")
+    return
+
+if user_id == ADMIN_ID and context.user_data.get("waiting_edit_qty_for"):
+    name = context.user_data.pop("waiting_edit_qty_for", None)
+    if text.strip().lower() in ("الغاء", "إلغاء", "cancel"):
+        update.message.reply_text("تم الإلغاء.")
+        return
+    try:
+        q = int(float(text.strip()))
+        if q <= 0:
+            raise ValueError()
+    except Exception:
+        update.message.reply_text("❌ صيغة الكمية غير صحيحة. مثال صحيح: 5000")
+        return
+    db_update_quantity_only(name, q)
+    update.message.reply_text(f"✅ تم تحديث كمية الخدمة (quantity_multiplier):\n{name}\nالكمية الجديدة: {q}")
+    return
+
+# ======== شحن آسياسيل (المستخدم) + حماية ========
     if context.user_data.get("waiting_for_card"):
         raw = text.strip()
         digits = "".join(ch for ch in raw if ch.isdigit())
@@ -1725,3 +2733,97 @@ def get_effective_price(user_id: int, service_name: str, base_price: float, kind
     except Exception as e:
         logger.error("get_effective_price error: %s", e)
         return float(base_price)
+
+
+
+def get_effective_price(user_id: int, service_name: str, base_price: float, kind: str = "generic") -> float:
+    """يحسب السعر المعروض للمستخدم:
+    - يأخذ سعر override إن تم تعيينه من لوحة المالك
+    - ثم يطبق خصم 10% للمشرفين (إن كان المستخدم مشرفًا)
+    """
+    try:
+        override = db_get_price_override(service_name)
+        bp = float(override if override is not None else base_price)
+        if is_moderator(user_id):
+            return round(bp * 0.90, 2)
+        return round(bp, 2)
+    except Exception as e:
+        logger.error("get_effective_price error: %s", e)
+        try:
+            return round(float(base_price), 2)
+        except Exception:
+            return base_price
+
+
+
+
+# ======== Helpers: إدارة الأسعار والكميات ========
+def _prq_get_catalog(cat: str):
+    if cat == "smm":
+        return services_dict
+    if cat == "pubg":
+        return pubg_services
+    if cat == "itunes":
+        return itunes_services
+    if cat == "telegram":
+        return telegram_services
+    if cat == "ludo":
+        return ludo_services
+    return services_dict
+
+def _prq_list_services(cat: str):
+    d = _prq_get_catalog(cat)
+    # ثابت الترتيب
+    return [(k, d[k]) for k in sorted(d.keys())]
+
+def _prq_render_page(context: CallbackContext, offset: int = 0) -> str:
+    cat = context.user_data.get("__prq_cat__") or "smm"
+    lst = context.user_data.get("__prq_list__") or []
+    page_size = 8
+    total = len(lst)
+    start = max(0, offset)
+    end = min(total, start + page_size)
+    context.user_data["__prq_offset__"] = start
+    lines = [f"القسم: {cat} — عدد الخدمات: {total}", "اختر خدمة للتعديل:"]
+    for i in range(start, end):
+        name, price = lst[i]
+        ov = db_get_price_override(name)
+        p = ov if ov is not None else price
+        lines.append(f"{i+1}) {name} — السعر الحالي: {p}$")
+    if total == 0:
+        lines.append("لا توجد خدمات.")
+    return "\n".join(lines)
+
+def _prq_page_kb(offset: int = 0):
+    page_size = 8
+    buttons = []
+    # Determine total from stored list length
+    from math import ceil
+    total = len((globals().get('CallbackContext').user_data if False else []))  # placeholder to keep static analyzers quiet
+    # We'll recompute in the handler; here we don't know total, so build generic prev/next with callbacks and rely on checks
+    buttons.append([InlineKeyboardButton("⬅️ السابق", callback_data=f"prq_page_{max(0, offset-8)}"),
+                    InlineKeyboardButton("التالي ➡️", callback_data=f"prq_page_{offset+8}")])
+    buttons.append([InlineKeyboardButton("رجوع", callback_data="admin_price_qty")])
+    return InlineKeyboardMarkup(buttons)
+
+def _prq_render_item(cat: str, name: str, base_price: float) -> str:
+    ov = db_get_price_override(name)
+    p = ov if ov is not None else base_price
+    q_text = ""
+    if cat == "smm":
+        eff = db_get_service_override(name) or {}
+        qm = eff.get("quantity_multiplier")
+        if qm is None:
+            qm = (service_api_mapping.get(name) or {}).get("quantity_multiplier")
+        if qm:
+            q_text = f"\nالكمية الحالية (quantity_multiplier): {qm}"
+    return f"الخدمة: {name}\nالسعر الحالي: {p}${q_text}"
+
+def _prq_item_kb(cat: str, idx: int):
+    kb = [[InlineKeyboardButton("✏️ تعديل السعر", callback_data=f"prq_edit_price_{idx}")]]
+    if cat == "smm":
+        kb.append([InlineKeyboardButton("✏️ تعديل الكمية", callback_data=f"prq_edit_qty_{idx}")])
+    kb.append([InlineKeyboardButton("🗑 حذف السعر المخصص", callback_data=f"prq_del_price_{idx}")])
+    kb.append([InlineKeyboardButton("رجوع", callback_data=f"prq_page_{ ( ( (idx//8)*8 ) ) }")])
+    return InlineKeyboardMarkup(kb)
+
