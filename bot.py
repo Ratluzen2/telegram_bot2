@@ -1,3 +1,25 @@
+
+
+# --- helper: owner/admin detection (non-invasive) ---
+def _is_owner_or_admin(user_id: int) -> bool:
+    try:
+        if user_id == ADMIN_ID:
+            return True
+    except Exception:
+        pass
+    try:
+        if 'is_admin' in globals():
+            return bool(is_admin(user_id))
+    except Exception:
+        pass
+    try:
+        rows = _exec("SELECT 1 FROM admins WHERE user_id=%s LIMIT 1", (user_id,), "all")
+        if rows:
+            return True
+    except Exception:
+        pass
+    return False
+
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
