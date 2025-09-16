@@ -33,9 +33,10 @@ from telegram.ext import (
     CallbackQueryHandler,
     Filters,
     CallbackContext
-,
-    ChatMemberHandler
-)# =========================
+
+    ChatMemberHandler,)
+
+# =========================
 # إعدادات السجل (logging)
 # =========================
 logging.basicConfig(
@@ -2562,11 +2563,11 @@ def main():
 
     updater = Updater(TOKEN, use_context=True)
     dp = updater.dispatcher
-    # تسجيل خاصية البث للجميع
+    # تفعيل خاصية البث المُعاد هيكلتها
     try:
         register_broadcast_feature(dp)
     except Exception as _e:
-        logging.warning('Broadcast not registered: %s', _e)
+        logging.warning('Broadcast register failed: %s', _e)
 
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(CommandHandler("help", help_cmd))
@@ -2594,13 +2595,13 @@ def get_effective_price(user_id: int, service_name: str, base_price: float, kind
 
 
 
-# ==================== [Broadcast Feature: Groups + Channels + Users] ====================
-# ينشئ/يحدّث جدول chats ويضيف زر "📣 إرسال إعلان للجميع" للمالك فقط
-# يرسل الإعلان لكل المستخدمين + المجموعات/السوبرجروبات + القنوات التي البوت فيها "مشرف"
+# ==================== [Refactored Broadcast Feature] ====================
+# يدعم: نص/صورة/فيديو/ملف/مقطع صوتي (audio)/ملاحظة صوتية (voice)/كل الوسائط عبر copy_message
+# التسجيل للمجموعات/القنوات: تلقائي عبر my_chat_member + يدوي عبر /register_here + /add_chat + تمرير رسالة من المحادثة
 try:
-    _exec  # تستخدم نفس دالة قاعدة البيانات الموجودة لديك
+    _exec
 except NameError:
-    raise RuntimeError("لم يتم العثور على الدالة _exec الخاصة بقاعدة البيانات. هذه الإضافة تعتمد عليها.")
+    raise RuntimeError("لم يتم العثور على دالة _exec الخاصة بقاعدة البيانات.")
 
 def _ensure_chats_table():
     try:
@@ -2633,9 +2634,6 @@ def _upsert_chat(chat_id: int, chat_type: str, title: str, is_admin=None):
         (chat_id, chat_type, title, is_admin),
     )
 
-def _set_chat_admin_status(chat_id: int, is_admin: bool):
-    _exec("UPDATE chats SET is_admin=%s, updated_at=NOW() WHERE chat_id=%s", (is_admin, chat_id))
-
 def track_any_chat(update, context):
     chat = update.effective_chat
     if not chat: return
@@ -2652,7 +2650,7 @@ def on_my_chat_member(update, context):
         is_admin = status in ("administrator", "creator")
         if chat.type in ("group", "supergroup", "channel"):
             _upsert_chat(chat.id, chat.type, getattr(chat, "title", "") or "", is_admin=is_admin)
-            logging.info("Bot status in %s (%s): %s | is_admin=%s", getattr(chat, "title", ""), chat.id, status, is_admin)
+            logging.info("Bot status in %s (%s): %s | admin=%s", getattr(chat, "title", "") or chat.id, chat.id, status, is_admin)
 
 def _db_get_all_user_ids():
     rows = _exec("SELECT user_id FROM users", fetch="all") or []
@@ -2677,23 +2675,79 @@ def get_all_broadcast_targets():
     users = _db_get_all_user_ids()
     groups = _db_get_group_ids()
     channels = _db_get_channel_ids()
-    return _unique([*users, *groups, *channels]), users, groups, channels
+    all_targets = _unique([*users, *groups, *channels])
+    return all_targets, users, groups, channels
 
-def _copy_to(chat_id, update, context):
+# === أوامر ربط المحادثات ===
+def register_here(update, context):
+    """اكتب /register_here داخل أي مجموعة/قناة لتسجيلها فورًا (للقنوات: اجعل البوت مشرف)."""
+    chat = update.effective_chat
+    if not chat: return
     try:
-        msg = update.effective_message
-        if not msg: return False
-        context.bot.copy_message(
-            chat_id=chat_id,
-            from_chat_id=msg.chat_id,
-            message_id=msg.message_id,
-            allow_sending_without_reply=True,
-        )
-        return True
+        # فحص إذا البوت مشرف (مهم للقنوات)
+        try:
+            me = context.bot.get_chat_member(chat.id, context.bot.id)
+            is_admin = getattr(me, "status", "") in ("administrator", "creator")
+        except Exception:
+            is_admin = False
+        _ensure_chats_table()
+        _upsert_chat(chat.id, chat.type, getattr(chat, "title", "") or "", is_admin=is_admin)
+        msg = "تم تسجيل هذه الدردشة للإعلانات."
+        if chat.type == "channel":
+            msg += " (مشرف ✅)" if is_admin else " (⚠️ اجعل البوت مشرفًا)"
+        update.effective_message.reply_text(msg)
     except Exception as e:
-        logging.debug("broadcast -> %s failed: %s", chat_id, e)
-        return False
+        update.effective_message.reply_text(f"تعذر التسجيل: {e}")
 
+def add_chat(update, context):
+    """ /add_chat <chat_id> — إضافة يدوية من المالك """
+    user = update.effective_user
+    if not user or user.id != ADMIN_ID: return
+    args = context.args or []
+    if not args:
+        update.effective_message.reply_text("استخدم: /add_chat <chat_id>")
+        return
+    try:
+        chat_id = int(args[0])
+    except Exception:
+        update.effective_message.reply_text("chat_id غير صحيح.")
+        return
+    try:
+        chat = context.bot.get_chat(chat_id)
+        try:
+            me = context.bot.get_chat_member(chat.id, context.bot.id)
+            is_admin = getattr(me, "status", "") in ("administrator", "creator")
+        except Exception:
+            is_admin = False
+        _ensure_chats_table()
+        _upsert_chat(chat.id, chat.type, getattr(chat, "title", "") or "", is_admin=is_admin)
+        txt = f"تمت إضافة: {getattr(chat, 'title', '') or chat.id} ({chat.type})."
+        if chat.type == "channel" and not is_admin:
+            txt += " ⚠️ اجعل البوت مشرفًا في القناة."
+        update.effective_message.reply_text(txt)
+    except Exception as e:
+        update.effective_message.reply_text(f"تعذر الإضافة: {e}")
+
+def link_forwarded_chat(update, context):
+    """يربط محادثة عبر تمرير رسالة منها إلى البوت (قد لا يعمل مع المحتوى المحمي)."""
+    user = update.effective_user
+    if not user or user.id != ADMIN_ID: return
+    msg = update.effective_message
+    fchat = getattr(msg, 'forward_from_chat', None)
+    if not fchat: return
+    try:
+        me = context.bot.get_chat_member(fchat.id, context.bot.id)
+        is_admin = getattr(me, "status", "") in ("administrator", "creator")
+    except Exception:
+        is_admin = False
+    _ensure_chats_table()
+    _upsert_chat(fchat.id, fchat.type, getattr(fchat, "title", "") or "", is_admin=is_admin)
+    notice = f"تم ربط: {getattr(fchat, 'title', '') or fchat.id} ({fchat.type})."
+    if fchat.type == "channel" and not is_admin:
+        notice += " ⚠️ اجعل البوت مشرفًا."
+    msg.reply_text(notice)
+
+# === زر ولوحة المالك ===
 def admin_menu_add_broadcast_button(kb):
     try:
         rows = list(kb.inline_keyboard) if kb and getattr(kb, "inline_keyboard", None) else []
@@ -2702,40 +2756,49 @@ def admin_menu_add_broadcast_button(kb):
     except Exception:
         return InlineKeyboardMarkup([[InlineKeyboardButton("📣 إرسال إعلان للجميع", callback_data="admin_announce")]])
 
-def _require_owner(update):
-    user = update.effective_user
-    return bool(user and user.id == ADMIN_ID)
+def _owner_only(update):
+    u = update.effective_user
+    return bool(u and u.id == ADMIN_ID)
 
 def on_admin_announce_btn(update, context):
     q = update.callback_query
     if not q: return
-    if not _require_owner(update):
+    if not _owner_only(update):
         q.answer("هذه الميزة للمالك فقط.", show_alert=True); return
     context.user_data["waiting_for_broadcast"] = True
     q.edit_message_text(
-        "📣 أرسل الآن نص/صورة/فيديو/صوت/ملف الإعلان.\nسأقوم بنشره على:\n"
-        "• كل المستخدمين\n• كل المجموعات\n• القنوات التي البوت مشرف بها",
+        "📣 أرسل الآن رسالة الإعلان (نص/صور/فيديو/ملفات/صوت/فويس…) "
+        "وسيتم نشرها على جميع المستخدمين والمجموعات والقنوات التي يحق لي الإرسال فيها.",
         parse_mode="HTML"
     )
 
 def on_admin_announce_cmd(update, context):
-    if not _require_owner(update): return
+    if not _owner_only(update): return
     context.user_data["waiting_for_broadcast"] = True
-    update.message.reply_text("📣 أرسل الآن رسالة الإعلان (أي نوع)، وسيتم نشرها على الجميع.")
+    update.message.reply_text("📣 أرسل الآن رسالة الإعلان (أي نوع).")
 
 def on_admin_send_broadcast(update, context):
-    if not _require_owner(update): return
-    if not context.user_data.get("waiting_for_broadcast"):
-        return
+    if not _owner_only(update): return
+    if not context.user_data.get("waiting_for_broadcast"): return
     context.user_data["waiting_for_broadcast"] = False
 
     _ensure_chats_table()
     all_targets, users, groups, channels = get_all_broadcast_targets()
 
-    ok = fail = 0
+    ok = 0; fail = 0
     for i, chat_id in enumerate(all_targets, 1):
-        if _copy_to(chat_id, update, context): ok += 1
-        else: fail += 1
+        try:
+            msg = update.effective_message
+            context.bot.copy_message(
+                chat_id=chat_id,
+                from_chat_id=msg.chat_id,
+                message_id=msg.message_id,
+                allow_sending_without_reply=True,
+            )
+            ok += 1
+        except Exception as e:
+            logging.debug("broadcast -> %s failed: %s", chat_id, e)
+            fail += 1
         if i % 25 == 0:
             time.sleep(1.0)
 
@@ -2746,44 +2809,20 @@ def on_admin_send_broadcast(update, context):
         f"• المستخدمين: {len(users)} | المجموعات: {len(groups)} | القنوات (مشرف): {len(channels)}"
     )
 
-
-
-# === Manual registration command (bootstraps existing groups/channels) ===
-def register_here(update, context):
-    """Run /register_here inside any group/supergroup/channel to add it to DB immediately.
-    In channels: make sure the bot is admin so it can see and post.
-    """
-    chat = update.effective_chat
-    if not chat:
-        return
-    try:
-        # Detect if bot is admin (esp. for channels)
-        try:
-            me = context.bot.get_chat_member(chat.id, context.bot.id)
-            is_admin = getattr(me, "status", "") in ("administrator", "creator")
-        except Exception:
-            is_admin = False
-
-        _ensure_chats_table()
-        _upsert_chat(chat.id, chat.type, getattr(chat, "title", "") or "", is_admin=is_admin)
-
-        msg = "تم تسجيل هذه الدردشة للإعلانات."
-        if chat.type == "channel":
-            if is_admin:
-                msg += " (البوت مشرف ✅)"
-            else:
-                msg += " (⚠️ اجعل البوت مشرفًا لكي يتمكن من الإرسال)"
-        update.effective_message.reply_text(msg)
-    except Exception as e:
-        update.effective_message.reply_text(f"تعذر التسجيل: {e}")
-
-
 def register_broadcast_feature(dispatcher):
     _ensure_chats_table()
+    # تتبع العضوية والصلاحيات
     dispatcher.add_handler(ChatMemberHandler(on_my_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
+    # تتبع أي رسالة (يسجّل المجموعات/القنوات عند أول نشاط يراه)
     dispatcher.add_handler(MessageHandler(Filters.all, track_any_chat), group=1)
+    # زر المالك + أمر بديل
     dispatcher.add_handler(CallbackQueryHandler(on_admin_announce_btn, pattern=r'^admin_announce$'))
     dispatcher.add_handler(CommandHandler("send_to_all", on_admin_announce_cmd))
-    dispatcher.add_handler(CommandHandler("register_here", register_here))
+    # تسليم الإعلان (أي نوع من الوسائط)
     dispatcher.add_handler(MessageHandler(Filters.user(user_id=ADMIN_ID) & Filters.all, on_admin_send_broadcast), group=0)
-# ==================== [/Broadcast Feature] ====================
+    # أوامر الربط
+    dispatcher.add_handler(CommandHandler("register_here", register_here))
+    dispatcher.add_handler(CommandHandler("add_chat", add_chat))
+    dispatcher.add_handler(MessageHandler(Filters.user(user_id=ADMIN_ID) & Filters.forwarded, link_forwarded_chat))
+
+# ==================== [/Refactored Broadcast Feature] ====================
