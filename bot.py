@@ -982,8 +982,38 @@ def _remove_qty_fragment(name: str) -> str:
         base = _re.sub(pat + r'$', '', base, flags=_re.IGNORECASE).strip()
     return _strip_k_digits(base).strip()
 
+
+def get_effective_quantity(service_name: str):
+    """
+    يرجع الكمية الفعلية المعرّفة للخدمة حسب الأولوية:
+    1) override من جدول service_api_overrides (إن وجد).
+    2) القيمة الافتراضية من service_api_mapping (إن وجدت).
+    3) استخراج تقديري من الاسم (لغير API).
+    4) None إذا لا يوجد.
+    """
+    try:
+        ov = db_get_service_override(service_name) or {}
+        q = ov.get("quantity_multiplier")
+        if q:
+            try:
+                return int(q)
+            except:
+                pass
+        base_map = service_api_mapping.get(service_name) or {}
+        q = base_map.get("quantity_multiplier")
+        if q:
+            try:
+                return int(q)
+            except:
+                pass
+    except Exception as _e:
+        # تجاهل ونكمل بالاستخراج من الاسم
+        pass
+    # خدمات لا تدعم API: نُقدّر من الاسم
+    return _extract_qty_from_name(service_name)
+
 def display_label_for_service(service_name: str, eff_price: float) -> str:
-    qty = _extract_qty_from_name(service_name)
+    qty = get_effective_quantity(service_name)
     qty_txt = f"{qty}" if (isinstance(qty, int) and qty > 0) else ""
     title = _remove_qty_fragment(service_name)
     lower = service_name
@@ -1791,6 +1821,7 @@ def button_handler(update: Update, context: CallbackContext):
     if data.startswith("itunes_service_"):
         service_name = data[len("itunes_service_"):]
         base_price = itunes_services.get(service_name, 0)
+        base_price = get_base_price(service_name, base_price)
         price = get_effective_price(user_id, service_name, base_price, "itunes")
         current_balance = users_balance.get(user_id, 0.0)
         if current_balance < price:
@@ -1817,6 +1848,7 @@ def button_handler(update: Update, context: CallbackContext):
     if data.startswith("telegram_service_"):
         service_name = data[len("telegram_service_"):]
         base_price = telegram_services.get(service_name, 0)
+        base_price = get_base_price(service_name, base_price)
         price = get_effective_price(user_id, service_name, base_price, "telegram")
         current_balance = users_balance.get(user_id, 0.0)
         if current_balance < price:
