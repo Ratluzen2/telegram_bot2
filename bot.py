@@ -799,16 +799,30 @@ def admin_menu_keyboard():
 # محرر أسعار وكميات الخدمات (لوحة المالك)
 # =========================
 def _ap_build_catalog():
-    """يبني كتالوج الخدمات من القواميس الحالية (اسم التصنيف، اسم الخدمة، السعر الافتراضي)."""
-    catalog = {
-        "smm": list(services_dict.keys()),
-        "pubg": list(pubg_services.keys()),
-        "itunes": list(itunes_services.keys()),
-        "telegram": list(telegram_services.keys()),
-        "mobile": list(mobile_recharge_services.keys()),
-        "ludo": list(ludo_services.keys())
+    """يبني كتالوج الإدمن بأمان حتى لو بعض القواميس غير معرّفة.
+    يتعامل مع غياب القواميس بإرجاع قوائم فارغة بدل أخطاء NameError.
+    """
+    g = globals()
+    def keys(name, alt=None):
+        d = g.get(name)
+        if d is None and alt:
+            d = g.get(alt)
+        if isinstance(d, dict):
+            try:
+                return list(d.keys())
+            except Exception:
+                return []
+        return []
+    return {
+        "smm": keys('services_dict'),
+        "telegram": keys('telegram_services'),
+        "itunes": keys('itunes_services'),
+        "mobile": keys('mobile_recharge_services'),
+        "pubg": keys('pubg_services', 'pubg_services_dict'),
+        "ludo": keys('ludo_services', 'ludo_services_dict'),
+        "score": keys('score_services'),
+        "live": keys('live_services'),
     }
-    return catalog
 
 def _ap_show_categories(query):
     kb = [
@@ -836,11 +850,6 @@ def _ap_list_services(update: Update, context: CallbackContext, query, cat: str,
     context.user_data["ap_map"] = items
     context.user_data["ap_cat"] = cat
     context.user_data["ap_page"] = page
-    try:
-        _adm_id = (update.effective_user.id if update and update.effective_user else query.from_user.id)
-    except Exception:
-        _adm_id = query.from_user.id
-    context.bot_data.setdefault('ap_maps', {})[_adm_id] = items
 
     lines = [f"القسم: {cat} — الصفحة {page+1}/{(total-1)//page_size+1 if total else 1}", ""]
     for i, name in enumerate(view, start=start):
@@ -883,23 +892,39 @@ def _ap_list_services(update: Update, context: CallbackContext, query, cat: str,
         context.bot.send_message(chat_id=update.effective_chat.id, text="\n".join(lines), reply_markup=InlineKeyboardMarkup(buttons))
 
 def _ap_show_service_actions(update: Update, context: CallbackContext, query, idx: int):
-    # استخدم قائمة الخدمات من user_data مع fallback إلى bot_data بحيث لا تضيع بين الضغطات
-    try:
-        _adm_id = (update.effective_user.id if update and update.effective_user else query.from_user.id)
-    except Exception:
-        _adm_id = query.from_user.id
-    items = (context.bot_data.get('ap_maps', {}) or {}).get(_adm_id) or context.user_data.get('ap_map') or []
+    items = context.user_data.get("ap_map") or []
     if idx < 0 or idx >= len(items):
-        query.answer('خيار غير صالح.', show_alert=True); return
-    raw = items[idx]
-    name = raw[0] if isinstance(raw, (list, tuple)) else raw
-    # نعرض أزرار الكمية والسعر دائماً في جميع الأقسام
-    keyboard = [
-        [InlineKeyboardButton('💲 تعديل السعر', callback_data=f'ap_setprice_{idx}'), InlineKeyboardButton('📦 تعديل الكمية', callback_data=f'ap_setqty_{idx}')],
-        [InlineKeyboardButton('🗑️ إزالة تعديل السعر', callback_data=f'ap_delprice_{idx}'), InlineKeyboardButton('🗑️ إزالة تعديل الكمية', callback_data=f'ap_delqty_{idx}')],
-        [InlineKeyboardButton('رجوع', callback_data=f"ap_page_{context.user_data.get('ap_cat','smm')}_{context.user_data.get('ap_page',0)}")]
-    ]
-    query.edit_message_text(f'الخدمة:\n• {name}\nاختر الإجراء:', reply_markup=InlineKeyboardMarkup(keyboard))
+        query.answer("خيار غير صالح.", show_alert=True); return
+    name = items[idx]
+    has_qty = (name in service_api_mapping)
+
+    btns = [[InlineKeyboardButton("💲 تعديل السعر", callback_data=f"ap_setprice_{idx}")]]
+    if has_qty:
+        btns.append([InlineKeyboardButton("📦 تعديل الكمية", callback_data=f"ap_setqty_{idx}")])
+    btns.append([InlineKeyboardButton("❌ حذف تعديل السعر", callback_data=f"ap_delprice_{idx}")])
+    if has_qty:
+        btns.append([InlineKeyboardButton("↩️ إعادة الكمية للافتراضي", callback_data=f"ap_delqty_{idx}")])
+    btns.append([InlineKeyboardButton("رجوع", callback_data=f"ap_page_{context.user_data.get('ap_cat','smm')}_{context.user_data.get('ap_page',0)}")])
+    query.edit_message_text(f"الخدمة:\n• {name}\nاختر الإجراء:", reply_markup=InlineKeyboardMarkup(btns))
+
+# ======= خدمات شراء رصيد الهاتف (قسم جديد) =======
+mobile_recharge_services = {
+    "شراء رصيد 2دولار اثير": 2.0,
+    "شراء رصيد 5دولار اثير": 5.0,
+    "شراء رصيد 10دولار اثير": 10.0,
+    "شراء رصيد 15دولار اثير": 15.0,
+    "شراء رصيد 40دولار اثير": 40.0,
+    "شراء رصيد 2دولار اسيا": 2.0,
+    "شراء رصيد 5دولار اسيا": 5.0,
+    "شراء رصيد 10دولار اسيا": 10.0,
+    "شراء رصيد 15دولار اسيا": 15.0,
+    "شراء رصيد 40دولار اسيا": 40.0,
+    "شراء رصيد 2دولار كورك": 2.0,
+    "شراء رصيد 5دولار كورك": 5.0,
+    "شراء رصيد 10دولار كورك": 10.0,
+    "شراء رصيد 15دولار كورك": 15.0,
+    "شراء رصيد 40دولار كورك": 40.0,
+}
 
 def mobile_recharge_services_keyboard(user_id: int):
     buttons = []
@@ -1304,10 +1329,6 @@ def get_mod_discount_help_text() -> str:
 
 def button_handler(update: Update, context: CallbackContext):
     query = update.callback_query
-    try:
-        query.answer()
-    except Exception:
-        pass
     user_id = query.from_user.id
     data = query.data
 
