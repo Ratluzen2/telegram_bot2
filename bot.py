@@ -743,7 +743,19 @@ def format_service_label(service_name: str, eff_price: float, kind: str = "gener
             q = 0
 
     # لا نغيّر أسماء خدمات السوشيال (1k/2k...)
-    if kind in ("generic", "telegram", "ludo"):
+    # الأقسام العادية: نعرض الكمية داخل الاسم بصيغة k(Q) عندما يكون الاسم يحتوي رقم+k
+    if kind in ("generic",):
+        if q:
+            try:
+                # أمثلة: 'مشاهدات تيكتوك 1k' -> 'مشاهدات تيكتوك k(Q)'
+                name2 = re.sub(r"(\d+)\s*k\b", f"k({q})", service_name)
+                return f"{name2} - {eff_price}$"
+            except Exception:
+                pass
+        return f"{service_name} - {eff_price}$"
+
+    # لا نغيّر أسماء التلغرام/لودو
+    if kind in ("telegram", "ludo"):
         return f"{service_name} - {eff_price}$"
 
     import re
