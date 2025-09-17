@@ -697,9 +697,9 @@ def get_effective_quantity(service_name: str) -> int:
     except Exception:
         return 0
 
-def format_service_label(service_name: str, eff_price: float, kind: str = 'generic') -> str:
+def format_service_label(service_name: str, eff_price: float, kind: str = 'generic', q_override: int | None = None) -> str:
     import re
-    q = get_effective_quantity(service_name)
+    q = q_override if (q_override is not None) else get_effective_quantity(service_name)
     def with_price(name: str):
         return f"{name} - {eff_price}$"
     if kind in ('generic','telegram','score','live'):
@@ -998,7 +998,7 @@ def itunes_services_keyboard(user_id: int):
     buttons = []
     for service_name, price in itunes_services.items():
         eff = get_display_price(user_id, service_name, price, "itunes")
-        buttons.append([InlineKeyboardButton(format_service_label(service_name, eff, "itunes"), callback_data=f"itunes_service_{service_name}")])
+        buttons.append([InlineKeyboardButton(format_service_label(service_name, eff, "itunes", 5 if idx == 0 else None), callback_data=f"itunes_service_{service_name}")])
     buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
     return InlineKeyboardMarkup(buttons)
 
