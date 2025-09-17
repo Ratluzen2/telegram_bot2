@@ -682,53 +682,6 @@ def db_count_user_orders(user_id:int) -> int:
 # =========================
 # خصومات المشرفين
 # =========================
-
-def get_effective_quantity(service_name: str) -> int:
-    try:
-        ov = db_get_service_override(service_name)
-        if ov and ov.get('quantity_multiplier') not in (None, '', 0, '0'):
-            return int(ov['quantity_multiplier'])
-    except Exception:
-        pass
-    try:
-        base = service_api_mapping.get(service_name) or {}
-        q = int(base.get('quantity_multiplier') or 0)
-        return q if q>0 else 0
-    except Exception:
-        return 0
-
-def format_service_label(service_name: str, eff_price: float, kind: str = 'generic', q_override: int | None = None) -> str:
-    import re
-    q = q_override if (q_override is not None) else get_effective_quantity(service_name)
-    def with_price(name: str):
-        return f"{name} - {eff_price}$"
-    if kind in ('generic','telegram','score','live'):
-        if q:
-            name2 = re.sub(r"(\d+)\s*k\b", f"({q}k)", service_name)
-            return with_price(name2)
-        return with_price(service_name)
-    if kind == 'mobile':
-        if q:
-            name2 = re.sub(r"(شراء\s+رصيد\s+)(\d+)(?=\s*دولار)", rf"\1({q})", service_name)
-            return with_price(name2)
-        return with_price(service_name)
-    if kind == 'itunes':
-        if q:
-            name2 = re.sub(r"(شراء\s+رصيد\s+)(\d+)(?=\s*ايتونز)", rf"\1({q})", service_name)
-            return with_price(name2)
-        return with_price(service_name)
-    if kind == 'pubg':
-        if q:
-            name2 = re.sub(r"(ببجي)\s*\d+\s*(شدة)", rf"\1 ({q})\2", service_name)
-            return with_price(name2)
-        return with_price(service_name)
-    if kind == 'ludo':
-        if q:
-            name2 = re.sub(r"(لودو)\s*\d+\s*(الماسة)", rf"\1 ({q}) \2", service_name)
-            return with_price(name2)
-        return with_price(service_name)
-    return with_price(service_name)
-
 def get_effective_price(user_id: int, service_name: str, base_price: float, kind: str = "generic") -> float:
     try:
         if not is_moderator(user_id):
@@ -766,6 +719,52 @@ def get_effective_price(user_id: int, service_name: str, base_price: float, kind
 
 # =========================
 # دوال مساعدة: السعر الفعلي والعرض مع الخصم + تعيين كمية API
+
+def format_service_label(service_name: str, eff_price: float, kind: str = 'generic', q_override: int | None = None) -> str:
+    """عرض الكمية داخل اسم الخدمة. السوشيال/تيليجرام/البث/السكور: (Qk)."""
+    import re
+    q = 0
+    try:
+        ov = db_get_service_override(service_name)
+        if ov and ov.get('quantity_multiplier'):
+            q = int(ov['quantity_multiplier'])
+    except Exception:
+        pass
+    if not q:
+        try:
+            base = service_api_mapping.get(service_name) or {}
+            q = int(base.get('quantity_multiplier') or 0)
+        except Exception:
+            q = 0
+    def with_price(name: str) -> str:
+        return f"{name} - {eff_price}$"
+    if kind in ('generic','telegram','score','live'):
+        if q:
+            name2 = re.sub(r"(\d+)\s*k\b", f"({q}k)", service_name)
+            return with_price(name2)
+        return with_price(service_name)
+    if kind == 'mobile':
+        if q:
+            name2 = re.sub(r"(شراء\s+رصيد\s+)(\d+)(?=\s*دولار)", rf"\1{q}", service_name)
+            return with_price(name2)
+        return with_price(service_name)
+    if kind == 'itunes':
+        if q:
+            name2 = re.sub(r"(شراء\s+رصيد\s+)(\d+)(?=\s*ايتونز)", rf"\1{q}", service_name)
+            return with_price(name2)
+        return with_price(service_name)
+    if kind == 'pubg':
+        if q:
+            name2 = re.sub(r"(ببجي)\s*\d+\s*(شدة)", rf"\1 ({q})\2", service_name)
+            return with_price(name2)
+        return with_price(service_name)
+    if kind == 'ludo':
+        if q:
+            name2 = re.sub(r"(لودو)\s*\d+\s*(الماسة)", rf"\1 ({q}) \2", service_name)
+            return with_price(name2)
+        return with_price(service_name)
+    return with_price(service_name)
+
 # =========================
 def get_base_price(service_name: str, default_price: float) -> float:
     """يرجع سعر الأساس مع مراعاة أي override في قاعدة البيانات."""
@@ -846,16 +845,28 @@ def admin_menu_keyboard():
 # محرر أسعار وكميات الخدمات (لوحة المالك)
 # =========================
 def _ap_build_catalog():
-    """يبني كتالوج الخدمات من القواميس الحالية (اسم التصنيف، اسم الخدمة، السعر الافتراضي)."""
-    catalog = {
-        "smm": list(services_dict.keys()),
-        "pubg": list(pubg_services.keys()),
-        "itunes": list(itunes_services.keys()),
-        "telegram": list(telegram_services.keys()),
-        "mobile": list(mobile_recharge_services.keys()),
-        "ludo": list(ludo_services.keys())
+    """يبني كتالوج الإدمن بأمان حتى لو بعض القواميس غير معرّفة."""
+    g = globals()
+    def keys(name, alt=None):
+        d = g.get(name)
+        if d is None and alt:
+            d = g.get(alt)
+        if isinstance(d, dict):
+            try:
+                return list(d.keys())
+            except Exception:
+                return []
+        return []
+    return {
+        'smm': keys('services_dict'),
+        'telegram': keys('telegram_services'),
+        'itunes': keys('itunes_services'),
+        'mobile': keys('mobile_recharge_services'),
+        'pubg': keys('pubg_services','pubg_services_dict'),
+        'ludo': keys('ludo_services','ludo_services_dict'),
+        'score': keys('score_services'),
+        'live': keys('live_services'),
     }
-    return catalog
 
 def _ap_show_categories(query):
     kb = [
@@ -883,6 +894,11 @@ def _ap_list_services(update: Update, context: CallbackContext, query, cat: str,
     context.user_data["ap_map"] = items
     context.user_data["ap_cat"] = cat
     context.user_data["ap_page"] = page
+    try:
+        _adm_id = (update.effective_user.id if update and update.effective_user else query.from_user.id)
+    except Exception:
+        _adm_id = query.from_user.id
+    context.bot_data.setdefault('ap_maps', {})[_adm_id] = items
 
     lines = [f"القسم: {cat} — الصفحة {page+1}/{(total-1)//page_size+1 if total else 1}", ""]
     for i, name in enumerate(view, start=start):
@@ -925,7 +941,11 @@ def _ap_list_services(update: Update, context: CallbackContext, query, cat: str,
         context.bot.send_message(chat_id=update.effective_chat.id, text="\n".join(lines), reply_markup=InlineKeyboardMarkup(buttons))
 
 def _ap_show_service_actions(update: Update, context: CallbackContext, query, idx: int):
-    items = context.user_data.get("ap_map") or []
+    try:
+        _adm_id = (update.effective_user.id if update and update.effective_user else query.from_user.id)
+    except Exception:
+        _adm_id = query.from_user.id
+    items = (context.bot_data.get('ap_maps', {}) or {}).get(_adm_id) or context.user_data.get('ap_map') or []
     if idx < 0 or idx >= len(items):
         query.answer("خيار غير صالح.", show_alert=True); return
     name = items[idx]
@@ -934,9 +954,9 @@ def _ap_show_service_actions(update: Update, context: CallbackContext, query, id
     btns = [[InlineKeyboardButton("💲 تعديل السعر", callback_data=f"ap_setprice_{idx}")]]
     if has_qty:
         btns.append([InlineKeyboardButton("📦 تعديل الكمية", callback_data=f"ap_setqty_{idx}")])
-    btns.append([InlineKeyboardButton("❌ حذف تعديل السعر", callback_data=f"ap_delprice_{idx}")])
+    btns.append([InlineKeyboardButton("🗑️ إزالة تعديل السعر", callback_data=f"ap_delprice_{idx}")])
     if has_qty:
-        btns.append([InlineKeyboardButton("↩️ إعادة الكمية للافتراضي", callback_data=f"ap_delqty_{idx}")])
+        btns.append([InlineKeyboardButton("🗑️ إزالة تعديل الكمية", callback_data=f"ap_delqty_{idx}")])
     btns.append([InlineKeyboardButton("رجوع", callback_data=f"ap_page_{context.user_data.get('ap_cat','smm')}_{context.user_data.get('ap_page',0)}")])
     query.edit_message_text(f"الخدمة:\n• {name}\nاختر الإجراء:", reply_markup=InlineKeyboardMarkup(btns))
 
@@ -1362,6 +1382,10 @@ def get_mod_discount_help_text() -> str:
 
 def button_handler(update: Update, context: CallbackContext):
     query = update.callback_query
+    try:
+        query.answer()
+    except Exception:
+        pass
     user_id = query.from_user.id
     data = query.data
 
@@ -1535,7 +1559,7 @@ def button_handler(update: Update, context: CallbackContext):
         service_buttons = []
         for name, price in followers_services.items():
             eff = get_display_price(user_id, name, price, "generic")
-            service_buttons.append([InlineKeyboardButton(f"{name} - {eff}$", callback_data=f"service_{name}")])
+            service_buttons.append([InlineKeyboardButton(format_service_label(name, eff, "generic"), callback_data=f"service_{name}")])
         service_buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
         query.edit_message_text("اختر الخدمة المطلوبة:", reply_markup=InlineKeyboardMarkup(service_buttons))
         return
@@ -1545,7 +1569,7 @@ def button_handler(update: Update, context: CallbackContext):
         service_buttons = []
         for name, price in likes_services.items():
             eff = get_display_price(user_id, name, price, "generic")
-            service_buttons.append([InlineKeyboardButton(f"{name} - {eff}$", callback_data=f"service_{name}")])
+            service_buttons.append([InlineKeyboardButton(format_service_label(name, eff, "generic"), callback_data=f"service_{name}")])
         service_buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
         query.edit_message_text("اختر الخدمة المطلوبة:", reply_markup=InlineKeyboardMarkup(service_buttons))
         return
@@ -1555,7 +1579,7 @@ def button_handler(update: Update, context: CallbackContext):
         service_buttons = []
         for name, price in views_services.items():
             eff = get_display_price(user_id, name, price, "generic")
-            service_buttons.append([InlineKeyboardButton(f"{name} - {eff}$", callback_data=f"service_{name}")])
+            service_buttons.append([InlineKeyboardButton(format_service_label(name, eff, "generic"), callback_data=f"service_{name}")])
         service_buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
         query.edit_message_text("اختر الخدمة المطلوبة:", reply_markup=InlineKeyboardMarkup(service_buttons))
         return
@@ -1565,7 +1589,7 @@ def button_handler(update: Update, context: CallbackContext):
         service_buttons = []
         for name, price in live_views_services.items():
             eff = get_display_price(user_id, name, price, "generic")
-            service_buttons.append([InlineKeyboardButton(f"{name} - {eff}$", callback_data=f"service_{name}")])
+            service_buttons.append([InlineKeyboardButton(format_service_label(name, eff, "generic"), callback_data=f"service_{name}")])
         service_buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
         query.edit_message_text("اختر الخدمة المطلوبة:", reply_markup=InlineKeyboardMarkup(service_buttons))
         return
@@ -1627,7 +1651,7 @@ def button_handler(update: Update, context: CallbackContext):
         service_buttons = []
         for name, base_price in pubg_services.items():
             eff = get_effective_price(user_id, name, base_price, "pubg")
-            service_buttons.append([InlineKeyboardButton(format_service_label(name, eff, "pubg"), callback_data=f"pubg_service_{name}")])
+            service_buttons.append([InlineKeyboardButton(f"{name} - {eff}$", callback_data=f"pubg_service_{name}")])
         service_buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
         query.edit_message_text("اختر خدمة شحن شدات ببجي:", reply_markup=InlineKeyboardMarkup(service_buttons))
         return
