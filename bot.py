@@ -730,140 +730,6 @@ def get_base_price(service_name: str, default_price: float) -> float:
 
 def get_display_price(user_id: int, service_name: str, default_price: float, kind: str="generic") -> float:
     """يُستخدم عند عرض الأزرار؛ يطبّق override ثم خصم المشرف (إن وُجد)."""
-# ======== تنسيق العرض: إزالة حرف k ووضع الكمية بين قوسين ========
-import re as _re
-
-def _strip_k_digits(s: str) -> str:
-    # حذف أي حرف k أو K أينما ظهر
-    return s.replace("k", "").replace("K", "")
-
-def _extract_qty_from_name(name: str) -> int:
-    """
-    يستخرج كمية تقريبية من اسم الخدمة.
-    - 10k => 10000، 1k => 1000 (وأي اتصال مثل بثك1k)
-    - "60 شدة" => 60
-    - "شراء رصيد 5 ايتونز" => 5
-    - "شراء رصيد 2 دولار اثير" => 2
-    - "لودو 830 الماسة/ذهب" => 830
-    - "اعضاء ... 3k" => 3000
-    إن لم نجد قيمة، نعيد None.
-    """
-    # 1) أرقام ملتصقة مع k
-    m = _re.search(r'(\d+)\s*k\b', name, flags=_re.IGNORECASE)
-    if not m:
-        m = _re.search(r'(\d+)k\b', name, flags=_re.IGNORECASE)
-    if not m:
-        m = _re.search(r'(\d+)k', name, flags=_re.IGNORECASE)
-    if m:
-        try:
-            return int(m.group(1)) * 1000
-        except:
-            pass
-
-    # 2) PUBG "60 شدة"
-    m = _re.search(r'(\d+)\s*شدة', name)
-    if m:
-        try:
-            return int(m.group(1))
-        except:
-            pass
-
-    # 3) iTunes "شراء رصيد 5 ايتونز"
-    m = _re.search(r'شراء\s*رصيد\s+(\d+)\s*ايتونز', name)
-    if m:
-        try:
-            return int(m.group(1))
-        except:
-            pass
-
-    # 4) Mobile "شراء رصيد 2 دولار اثير/اسيا/كورك"
-    m = _re.search(r'شراء\s*رصيد\s+(\d+)\s*دولار\s*(?:اثير|اسيا|كورك)', name)
-    if m:
-        try:
-            return int(m.group(1))
-        except:
-            pass
-
-    # 5) Ludo "لودو 830 الماسة/ذهب"
-    m = _re.search(r'لودو\s+(\d+)\s*(?:الماسة|ذهب)', name)
-    if m:
-        try:
-            return int(m.group(1))
-        except:
-            pass
-
-    # 6) "رفع سكور بثك1k" أو مشابه
-    m = _re.search(r'(\d+)\s*k', name, flags=_re.IGNORECASE)
-    if m:
-        try:
-            return int(m.group(1)) * 1000
-        except:
-            pass
-
-    # 7) كحل أخير: آخر رقم في الاسم
-    m = _re.findall(r'(\d+)', name)
-    if m:
-        try:
-            return int(m[-1])
-        except:
-            pass
-    return None
-
-def _remove_qty_fragment(name: str) -> str:
-    """يزيل جزء الكمية من نهاية الاسم لعرض عنوان نظيف بدون k."""
-    # أنماط شائعة
-    patterns = [
-        r'\s*\d+\s*k\b',          # 1k, 10k
-        r'\s*\d+k\b',             # 1k ملتصقة
-        r'\s*\d+\s*شدة',          # 60 شدة
-        r'\s*\d+\s*ايتونز',       # 5 ايتونز
-        r'\s*\d+\s*دولار\s*(?:اثير|اسيا|كورك)',  # 2 دولار اثير/اسيا/كورك
-        r'\s*\d+\s*(?:الماسة|ذهب)',  # 830 الماسة/ذهب
-        r'بثك\s*\d+\s*k\b',       # بثك1k
-    ]
-    base = name
-    for pat in patterns:
-        base = _re.sub(pat + r'$', '', base, flags=_re.IGNORECASE).strip()
-    return _strip_k_digits(base).strip()
-
-def display_label_for_service(service_name: str, eff_price: float) -> str:
-    """
-    يبني النص المعروض للزر:
-    - يحذف k بالكامل
-    - يضع الكمية داخل قوسين (…) حسب ما نعرفه من الاسم
-    - ينسيق الأمثلة: 
-        • متابعين/لايكات/مشاهدات/مشاهدات بث/أعضاء تلي/رفع سكور: "{العنوان} {السعر}$ - ({الكمية})"
-        • ببجي: "ببجي ({الكمية}) شدة - {السعر}$"
-        • ايتونز: "شراء رصيد ({الكمية}) ايتونز - {السعر}$"
-        • رصيد الهاتف: "شراء رصيد ({الكمية}) دولار اثير/اسيا/كورك - {السعر}$"
-        • لودو: "لودو ({الكمية}) الماسة/ذهب - {السعر}$"
-    """
-    qty = _extract_qty_from_name(service_name)
-    qty_txt = f"{qty}" if (isinstance(qty, int) and qty > 0) else ""
-    title = _remove_qty_fragment(service_name)
-
-    # تحديد صيغة خاصة لبعض الأقسام بناءً على الكلمات المفتاحية
-    lower = service_name
-    if "شدة" in lower:
-        # PUBG
-        suffix = "شدة"
-        return f"{_strip_k_digits(title)} ({qty_txt}) {suffix} - {eff_price}$"
-    if "ايتونز" in lower:
-        return f"شراء رصيد ({qty_txt}) ايتونز - {eff_price}$"
-    if "دولار اثير" in lower:
-        return f"شراء رصيد ({qty_txt}) دولار اثير - {eff_price}$"
-    if "دولار اسيا" in lower or "دولار اسي" in lower:
-        return f"شراء رصيد ({qty_txt}) دولار اسيا - {eff_price}$"
-    if "دولار كورك" in lower:
-        return f"شراء رصيد ({qty_txt}) دولار كورك - {eff_price}$"
-    if "لودو" in lower and ("الماسة" in lower or "ذهب" in lower):
-        # لودو
-        tail = "الماسة" if "الماسة" in lower else "ذهب" if "ذهب" in lower else ""
-        return f"لودو ({qty_txt}) {tail} - {eff_price}$"
-
-    # إفتراضي (سوشيال: متابعين/لايكات/مشاهدات/بث/تلي/رفع سكور)
-    return f"{_strip_k_digits(title)} {eff_price}$ - ({qty_txt})"
-
     base = get_base_price(service_name, default_price)
     return get_effective_price(user_id, service_name, base, kind)
 
@@ -906,9 +772,8 @@ def main_menu_keyboard(user_id: int):
     ])
 
 def admin_menu_keyboard():
-    buttons = []
-    if user_id == ADMIN_ID:
-        buttons.append([InlineKeyboardButton("تعديل الأسعار والكميات", callback_data="admin_edit_prices")]),
+    buttons = [
+        [InlineKeyboardButton("تعديل الأسعار والكميات", callback_data="admin_edit_prices")],
         [InlineKeyboardButton("الطلبات المعلّقة (الخدمات)", callback_data="pending_smm_orders")],
         [InlineKeyboardButton("الكارتات المعلقة", callback_data="pending_cards")],
         [InlineKeyboardButton("طلبات شدات ببجي", callback_data="pending_pubg_orders")],
@@ -1055,10 +920,110 @@ def mobile_recharge_services_keyboard(user_id: int):
     buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
     return InlineKeyboardMarkup(buttons)
 
-def services_menu_keyboard(user_id: int):
-    buttons = []
-    if user_id == ADMIN_ID:
-        buttons.append([InlineKeyboardButton("تعديل الأسعار والكميات", callback_data="admin_edit_prices")]),
+
+# ======== Helpers: تنسيق العرض وإزالة k ووضع الكمية بين قوسين ========
+import re as _re
+
+def _strip_k_digits(s: str) -> str:
+    return s.replace("k", "").replace("K", "")
+
+def _extract_qty_from_name(name: str) -> int:
+    m = _re.search(r'(\d+)\s*k\b', name, flags=_re.IGNORECASE)
+    if not m:
+        m = _re.search(r'(\d+)k\b', name, flags=_re.IGNORECASE)
+    if not m:
+        m = _re.search(r'(\d+)k', name, flags=_re.IGNORECASE)
+    if m:
+        try: return int(m.group(1)) * 1000
+        except: pass
+
+    m = _re.search(r'(\d+)\s*شدة', name)
+    if m:
+        try: return int(m.group(1))
+        except: pass
+
+    m = _re.search(r'شراء\s*رصيد\s+(\d+)\s*ايتونز', name)
+    if m:
+        try: return int(m.group(1))
+        except: pass
+
+    m = _re.search(r'شراء\s*رصيد\s+(\d+)\s*دولار\s*(?:اثير|اسيا|كورك)', name)
+    if m:
+        try: return int(m.group(1))
+        except: pass
+
+    m = _re.search(r'لودو\s+(\d+)\s*(?:الماسة|ذهب)', name)
+    if m:
+        try: return int(m.group(1))
+        except: pass
+
+    m = _re.search(r'(\d+)\s*k', name, flags=_re.IGNORECASE)
+    if m:
+        try: return int(m.group(1)) * 1000
+        except: pass
+
+    m = _re.findall(r'(\d+)', name)
+    if m:
+        try: return int(m[-1])
+        except: pass
+    return None
+
+def _remove_qty_fragment(name: str) -> str:
+    patterns = [
+        r'\s*\d+\s*k\b', r'\s*\d+k\b',
+        r'\s*\d+\s*شدة',
+        r'\s*\d+\s*ايتونز',
+        r'\s*\d+\s*دولار\s*(?:اثير|اسيا|كورك)',
+        r'\s*\d+\s*(?:الماسة|ذهب)',
+        r'بثك\s*\d+\s*k\b',
+    ]
+    base = name
+    for pat in patterns:
+        base = _re.sub(pat + r'$', '', base, flags=_re.IGNORECASE).strip()
+    return _strip_k_digits(base).strip()
+
+def display_label_for_service(service_name: str, eff_price: float) -> str:
+    qty = _extract_qty_from_name(service_name)
+    qty_txt = f"{qty}" if (isinstance(qty, int) and qty > 0) else ""
+    title = _remove_qty_fragment(service_name)
+    lower = service_name
+    if "شدة" in lower:
+        return f"{_strip_k_digits(title)} ({qty_txt}) شدة - {eff_price}$"
+    if "ايتونز" in lower:
+        return f"شراء رصيد ({qty_txt}) ايتونز - {eff_price}$"
+    if "دولار اثير" in lower:
+        return f"شراء رصيد ({qty_txt}) دولار اثير - {eff_price}$"
+    if "دولار اسيا" in lower or "دولار اسي" in lower:
+        return f"شراء رصيد ({qty_txt}) دولار اسيا - {eff_price}$"
+    if "دولار كورك" in lower:
+        return f"شراء رصيد ({qty_txt}) دولار كورك - {eff_price}$"
+    if "لودو" in lower and ("الماسة" in lower or "ذهب" in lower):
+        tail = "الماسة" if "الماسة" in lower else "ذهب" if "ذهب" in lower else ""
+        return f"لودو ({qty_txt}) {tail} - {eff_price}$"
+    return f"{_strip_k_digits(title)} {eff_price}$ - ({qty_txt})"
+
+def services_menu_keyboard_for(user_id: int):
+    # نسخة مفلترة لإخفاء زر تعديل الأسعار والكميات عن غير المالك
+    buttons = [
+        [InlineKeyboardButton("تعديل الأسعار والكميات", callback_data="admin_edit_prices")],
+        [InlineKeyboardButton("قسم المتابعين", callback_data="show_followers")],
+        [InlineKeyboardButton("قسم اللايكات", callback_data="show_likes")],
+        [InlineKeyboardButton("قسم المشاهدات", callback_data="show_views")],
+        [InlineKeyboardButton("قسم مشاهدات البث المباشر", callback_data="show_live_views")],
+        [InlineKeyboardButton("قسم شحن شدات ببجي", callback_data="show_pubg")],
+        [InlineKeyboardButton("رفع سكور تيكتوك", callback_data="show_tiktok_score")],
+        [InlineKeyboardButton("قسم شراء رصيد ايتونز", callback_data="show_itunes_services")],
+        [InlineKeyboardButton("قسم شراء رصيد الهاتف", callback_data="show_mobile_recharge")],
+        [InlineKeyboardButton("خدمات التليجرام", callback_data="show_telegram_services")],
+        [InlineKeyboardButton("خدمات لودو", callback_data="show_ludo_services")],
+        [InlineKeyboardButton("رجوع", callback_data="back_main")]
+    ]
+    if user_id != ADMIN_ID:
+        buttons = buttons[1:]  # إزالة زر التعديل
+    return InlineKeyboardMarkup(buttons)
+def services_menu_keyboard():
+    buttons = [
+        [InlineKeyboardButton("تعديل الأسعار والكميات", callback_data="admin_edit_prices")],
         [InlineKeyboardButton("قسم المتابعين", callback_data="show_followers")],
         [InlineKeyboardButton("قسم اللايكات", callback_data="show_likes")],
         [InlineKeyboardButton("قسم المشاهدات", callback_data="show_views")],
@@ -1591,7 +1556,7 @@ def button_handler(update: Update, context: CallbackContext):
         return
 
     if data == "show_services":
-        query.edit_message_text("اختر القسم:", reply_markup=services_menu_keyboard(user_id))
+        query.edit_message_text("اختر القسم:", reply_markup=services_menu_keyboard_for(user_id))
         return
 
     # ======= المتصدرين🎉 =======
@@ -1682,17 +1647,17 @@ def button_handler(update: Update, context: CallbackContext):
         price = get_effective_price(user_id, service_name, base_price, "generic")
         current_balance = users_balance.get(user_id, 0.0)
         if current_balance < price:
-            buttons = []
-    if user_id == ADMIN_ID:
-        buttons.append([InlineKeyboardButton("تعديل الأسعار والكميات", callback_data="admin_edit_prices")]),
+            buttons = [
                 [InlineKeyboardButton("شحن عبر اسياسيل", callback_data="charge_asiacell")],
                 [InlineKeyboardButton("شحن عبر سوبركي", callback_data="charge_superkey")],
                 [InlineKeyboardButton("شحن عبر زين كاش", callback_data="charge_zaincash")],
                 [InlineKeyboardButton("شحن عبر USDT", callback_data="charge_usdt")],
                 [InlineKeyboardButton("شحن عبر نقاط سنتات", callback_data="charge_cent_points")],
                 [InlineKeyboardButton("شحن عبر هلابي", callback_data="charge_helabi")],
-                [InlineKeyboardButton("رجوع", callback_data="show_tiktok_score")]
+                [InlineKeyboardButton("رجوع", callback_data="show_followers")]
             ]
+            if user_id == ADMIN_ID:
+                buttons.insert(0, [InlineKeyboardButton("تعديل الأسعار والكميات", callback_data="admin_edit_prices")])
             query.edit_message_text("رصيدك ليس كافياً.", reply_markup=InlineKeyboardMarkup(buttons))
             return
         # تعليمات الإدخال
@@ -1733,17 +1698,17 @@ def button_handler(update: Update, context: CallbackContext):
         price = get_effective_price(user_id, service_name, base_price, "generic")
         current_balance = users_balance.get(user_id, 0.0)
         if current_balance < price:
-            buttons = []
-    if user_id == ADMIN_ID:
-        buttons.append([InlineKeyboardButton("تعديل الأسعار والكميات", callback_data="admin_edit_prices")]),
+            buttons = [
                 [InlineKeyboardButton("شحن عبر اسياسيل", callback_data="charge_asiacell")],
                 [InlineKeyboardButton("شحن عبر سوبركي", callback_data="charge_superkey")],
                 [InlineKeyboardButton("شحن عبر زين كاش", callback_data="charge_zaincash")],
                 [InlineKeyboardButton("شحن عبر USDT", callback_data="charge_usdt")],
                 [InlineKeyboardButton("شحن عبر نقاط سنتات", callback_data="charge_cent_points")],
                 [InlineKeyboardButton("شحن عبر هلابي", callback_data="charge_helabi")],
-                [InlineKeyboardButton("رجوع", callback_data="show_services")]
+                [InlineKeyboardButton("رجوع", callback_data="show_followers")]
             ]
+            if user_id == ADMIN_ID:
+                buttons.insert(0, [InlineKeyboardButton("تعديل الأسعار والكميات", callback_data="admin_edit_prices")])
             query.edit_message_text("رصيدك ليس كافياً.", reply_markup=InlineKeyboardMarkup(buttons))
             return
 
@@ -1779,17 +1744,17 @@ def button_handler(update: Update, context: CallbackContext):
         price = get_effective_price(user_id, service_name, base_price, "ludo")
         current_balance = users_balance.get(user_id, 0.0)
         if current_balance < price:
-            buttons = []
-    if user_id == ADMIN_ID:
-        buttons.append([InlineKeyboardButton("تعديل الأسعار والكميات", callback_data="admin_edit_prices")]),
+            buttons = [
                 [InlineKeyboardButton("شحن عبر اسياسيل", callback_data="charge_asiacell")],
                 [InlineKeyboardButton("شحن عبر سوبركي", callback_data="charge_superkey")],
                 [InlineKeyboardButton("شحن عبر زين كاش", callback_data="charge_zaincash")],
                 [InlineKeyboardButton("شحن عبر USDT", callback_data="charge_usdt")],
                 [InlineKeyboardButton("شحن عبر نقاط سنتات", callback_data="charge_cent_points")],
                 [InlineKeyboardButton("شحن عبر هلابي", callback_data="charge_helabi")],
-                [InlineKeyboardButton("رجوع", callback_data="show_ludo_services")]
+                [InlineKeyboardButton("رجوع", callback_data="show_followers")]
             ]
+            if user_id == ADMIN_ID:
+                buttons.insert(0, [InlineKeyboardButton("تعديل الأسعار والكميات", callback_data="admin_edit_prices")])
             query.edit_message_text("رصيدك ليس كافياً.", reply_markup=InlineKeyboardMarkup(buttons))
             return
         context.user_data["selected_ludo_service"] = service_name
@@ -1804,17 +1769,17 @@ def button_handler(update: Update, context: CallbackContext):
         price = get_effective_price(user_id, name, base_price, "pubg")
         current_balance = users_balance.get(user_id, 0.0)
         if current_balance < price:
-            buttons = []
-    if user_id == ADMIN_ID:
-        buttons.append([InlineKeyboardButton("تعديل الأسعار والكميات", callback_data="admin_edit_prices")]),
+            buttons = [
                 [InlineKeyboardButton("شحن عبر اسياسيل", callback_data="charge_asiacell")],
                 [InlineKeyboardButton("شحن عبر سوبركي", callback_data="charge_superkey")],
                 [InlineKeyboardButton("شحن عبر زين كاش", callback_data="charge_zaincash")],
                 [InlineKeyboardButton("شحن عبر USDT", callback_data="charge_usdt")],
                 [InlineKeyboardButton("شحن عبر نقاط سنتات", callback_data="charge_cent_points")],
                 [InlineKeyboardButton("شحن عبر هلابي", callback_data="charge_helabi")],
-                [InlineKeyboardButton("رجوع", callback_data="show_pubg")]
+                [InlineKeyboardButton("رجوع", callback_data="show_followers")]
             ]
+            if user_id == ADMIN_ID:
+                buttons.insert(0, [InlineKeyboardButton("تعديل الأسعار والكميات", callback_data="admin_edit_prices")])
             query.edit_message_text("رصيدك ليس كافياً.", reply_markup=InlineKeyboardMarkup(buttons))
             return
         context.user_data["selected_pubg_service"] = name
@@ -1829,17 +1794,17 @@ def button_handler(update: Update, context: CallbackContext):
         price = get_effective_price(user_id, service_name, base_price, "itunes")
         current_balance = users_balance.get(user_id, 0.0)
         if current_balance < price:
-            buttons = []
-    if user_id == ADMIN_ID:
-        buttons.append([InlineKeyboardButton("تعديل الأسعار والكميات", callback_data="admin_edit_prices")]),
+            buttons = [
                 [InlineKeyboardButton("شحن عبر اسياسيل", callback_data="charge_asiacell")],
                 [InlineKeyboardButton("شحن عبر سوبركي", callback_data="charge_superkey")],
                 [InlineKeyboardButton("شحن عبر زين كاش", callback_data="charge_zaincash")],
                 [InlineKeyboardButton("شحن عبر USDT", callback_data="charge_usdt")],
                 [InlineKeyboardButton("شحن عبر نقاط سنتات", callback_data="charge_cent_points")],
                 [InlineKeyboardButton("شحن عبر هلابي", callback_data="charge_helabi")],
-                [InlineKeyboardButton("رجوع", callback_data="show_itunes_services")]
+                [InlineKeyboardButton("رجوع", callback_data="show_followers")]
             ]
+            if user_id == ADMIN_ID:
+                buttons.insert(0, [InlineKeyboardButton("تعديل الأسعار والكميات", callback_data="admin_edit_prices")])
             query.edit_message_text("رصيدك ليس كافياً.", reply_markup=InlineKeyboardMarkup(buttons))
             return
         context.user_data["selected_itunes_service"] = service_name
@@ -1855,17 +1820,17 @@ def button_handler(update: Update, context: CallbackContext):
         price = get_effective_price(user_id, service_name, base_price, "telegram")
         current_balance = users_balance.get(user_id, 0.0)
         if current_balance < price:
-            buttons = []
-    if user_id == ADMIN_ID:
-        buttons.append([InlineKeyboardButton("تعديل الأسعار والكميات", callback_data="admin_edit_prices")]),
+            buttons = [
                 [InlineKeyboardButton("شحن عبر اسياسيل", callback_data="charge_asiacell")],
                 [InlineKeyboardButton("شحن عبر سوبركي", callback_data="charge_superkey")],
                 [InlineKeyboardButton("شحن عبر زين كاش", callback_data="charge_zaincash")],
                 [InlineKeyboardButton("شحن عبر USDT", callback_data="charge_usdt")],
                 [InlineKeyboardButton("شحن عبر نقاط سنتات", callback_data="charge_cent_points")],
                 [InlineKeyboardButton("شحن عبر هلابي", callback_data="charge_helabi")],
-                [InlineKeyboardButton("رجوع", callback_data="show_telegram_services")]
+                [InlineKeyboardButton("رجوع", callback_data="show_followers")]
             ]
+            if user_id == ADMIN_ID:
+                buttons.insert(0, [InlineKeyboardButton("تعديل الأسعار والكميات", callback_data="admin_edit_prices")])
             query.edit_message_text("رصيدك ليس كافياً.", reply_markup=InlineKeyboardMarkup(buttons))
             return
         context.user_data["selected_telegram_service"] = service_name
@@ -1885,9 +1850,8 @@ def button_handler(update: Update, context: CallbackContext):
     # عرض الرصيد
     if data == "show_balance":
         balance = users_balance.get(user_id, 0.0)
-        buttons = []
-    if user_id == ADMIN_ID:
-        buttons.append([InlineKeyboardButton("تعديل الأسعار والكميات", callback_data="admin_edit_prices")]),
+        buttons = [
+        [InlineKeyboardButton("تعديل الأسعار والكميات", callback_data="admin_edit_prices")],
             [InlineKeyboardButton("شحن عبر اسياسيل", callback_data="charge_asiacell")],
             [InlineKeyboardButton("شحن عبر سوبركي", callback_data="charge_superkey")],
             [InlineKeyboardButton("شحن عبر زين كاش", callback_data="charge_zaincash")],
@@ -3074,9 +3038,8 @@ def mobile_button_handler(update: Update, context: CallbackContext):
         current_balance = users_balance.get(user_id, 0.0)
         if current_balance < price:
             try:
-                buttons = []
-    if user_id == ADMIN_ID:
-        buttons.append([InlineKeyboardButton("تعديل الأسعار والكميات", callback_data="admin_edit_prices")]),
+                buttons = [
+        [InlineKeyboardButton("تعديل الأسعار والكميات", callback_data="admin_edit_prices")],
                     [InlineKeyboardButton("شحن عبر اسياسيل", callback_data="charge_asiacell")],
                     [InlineKeyboardButton("شحن عبر سوبركي", callback_data="charge_superkey")],
                     [InlineKeyboardButton("شحن عبر زين كاش", callback_data="charge_zaincash")],
