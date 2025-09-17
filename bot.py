@@ -720,22 +720,52 @@ def get_effective_price(user_id: int, service_name: str, base_price: float, kind
 # =========================
 # دوال مساعدة: السعر الفعلي والعرض مع الخصم + تعيين كمية API
 
-def get_effective_quantity(service_name: str) -> int:
-    """يرجع quantity_multiplier الفعلي (override إن وُجد، وإلا الافتراضي).
-    يعاد 0 إذا لا توجد كمية معرّفة (كي لا نعرض ×0).
+def format_service_label(service_name: str, eff_price: float, kind: str = "generic") -> str:
+    """يبني نص الزرّ حسب النوع بحيث تُعرض الكمية داخل الاسم وليس بجانب السعر.
+    الأمثلة:
+    - mobile:  'شراء رصيد (Q) دولار اثير'
+    - pubg:    'ببجي (Q) شدة'
+    - itunes:  'شراء رصيد (Q) ايتونز'
+    - telegram/ludo/generic: نحتفظ بالاسم كما هو (1k/2k...) ولا نضيف ×Q.
     """
+    q = 0
     try:
         ov = db_get_service_override(service_name)
         if ov and ov.get('quantity_multiplier'):
-            return int(ov['quantity_multiplier'])
+            q = int(ov['quantity_multiplier'])
     except Exception:
         pass
-    try:
-        base = service_api_mapping.get(service_name) or {}
-        q = int(base.get('quantity_multiplier') or 0)
-        return q if q > 0 else 0
-    except Exception:
-        return 0
+    if not q:
+        try:
+            base = service_api_mapping.get(service_name) or {}
+            q = int(base.get('quantity_multiplier') or 0)
+        except Exception:
+            q = 0
+
+    # لا نغيّر أسماء خدمات السوشيال (1k/2k...)
+    if kind in ("generic", "telegram", "ludo"):
+        return f"{service_name} - {eff_price}$"
+
+    import re
+    if kind == "mobile":
+        # حاول استبدال أي رقم قبل كلمة 'دولار' بـ (Q)
+        if q:
+            return re.sub(r"(شراء\s+رصيد\s+)(\d+)(?=\s*دولار)", rf"\\1({q})", service_name) + f" - {eff_price}$"
+        return f"{service_name} - {eff_price}$"
+
+    if kind == "itunes":
+        if q:
+            # أمثلة: 'شراء رصيد 5 ايتونز' -> 'شراء رصيد (Q) ايتونز'
+            return re.sub(r"(شراء\s+رصيد\s+)(\d+)(?=\s*ايتونز)", rf"\\1({q})", service_name) + f" - {eff_price}$"
+        return f"{service_name} - {eff_price}$"
+
+    if kind == "pubg":
+        if q:
+            # 'ببجي 60 شدة' -> 'ببجي (Q) شدة'
+            return re.sub(r"(ببجي\s+)(\d+)(?=\s*شدة)", rf"\\1({q})", service_name) + f" - {eff_price}$"
+        return f"{service_name} - {eff_price}$"
+
+    return f"{service_name} - {eff_price}$"
 
 # =========================
 def get_base_price(service_name: str, default_price: float) -> float:
@@ -934,7 +964,7 @@ def mobile_recharge_services_keyboard(user_id: int):
     buttons = []
     for service_name, base_price in mobile_recharge_services.items():
         eff = get_display_price(user_id, service_name, base_price, "mobile")
-        buttons.append([InlineKeyboardButton(f"{service_name} - {eff}$", callback_data=f"mobile_service_{service_name}")])
+        buttons.append([InlineKeyboardButton(format_service_label(service_name, eff, "mobile"), callback_data=f"mobile_service_{service_name}")])
     buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
     return InlineKeyboardMarkup(buttons)
 
@@ -969,7 +999,7 @@ def itunes_services_keyboard(user_id: int):
     buttons = []
     for service_name, price in itunes_services.items():
         eff = get_display_price(user_id, service_name, price, "itunes")
-        buttons.append([InlineKeyboardButton(f"{service_name} - {eff}$", callback_data=f"itunes_service_{service_name}")])
+        buttons.append([InlineKeyboardButton(format_service_label(service_name, eff, "itunes"), callback_data=f"itunes_service_{service_name}")])
     buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
     return InlineKeyboardMarkup(buttons)
 
@@ -977,7 +1007,7 @@ def telegram_services_keyboard(user_id: int):
     buttons = []
     for service_name, price in telegram_services.items():
         eff = get_display_price(user_id, service_name, price, "telegram")
-        buttons.append([InlineKeyboardButton(f"{service_name} - {eff}$", callback_data=f"telegram_service_{service_name}")])
+        buttons.append([InlineKeyboardButton(format_service_label(service_name, eff, "telegram"), callback_data=f"telegram_service_{service_name}")])
     buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
     return InlineKeyboardMarkup(buttons)
 
@@ -986,7 +1016,7 @@ def ludo_services_keyboard(user_id: int):
     buttons = []
     for service_name, price in ludo_services.items():
         eff = get_display_price(user_id, service_name, price, "ludo")
-        buttons.append([InlineKeyboardButton(f"{service_name} - {eff}$", callback_data=f"ludo_service_{service_name}")])
+        buttons.append([InlineKeyboardButton(format_service_label(service_name, eff, "ludo"), callback_data=f"ludo_service_{service_name}")])
     buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
     return InlineKeyboardMarkup(buttons)
 
@@ -1506,7 +1536,7 @@ def button_handler(update: Update, context: CallbackContext):
         service_buttons = []
         for name, price in followers_services.items():
             eff = get_display_price(user_id, name, price, "generic")
-            service_buttons.append([InlineKeyboardButton(f"{name} - {eff}$" + (f" ×{get_effective_quantity(name)}" if get_effective_quantity(name) else ""), callback_data=f"service_{name}")])
+            service_buttons.append([InlineKeyboardButton(format_service_label(name, eff, "generic"), callback_data=f"service_{name}")])
         service_buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
         query.edit_message_text("اختر الخدمة المطلوبة:", reply_markup=InlineKeyboardMarkup(service_buttons))
         return
@@ -1516,7 +1546,7 @@ def button_handler(update: Update, context: CallbackContext):
         service_buttons = []
         for name, price in likes_services.items():
             eff = get_display_price(user_id, name, price, "generic")
-            service_buttons.append([InlineKeyboardButton(f"{name} - {eff}$" + (f" ×{get_effective_quantity(name)}" if get_effective_quantity(name) else ""), callback_data=f"service_{name}")])
+            service_buttons.append([InlineKeyboardButton(format_service_label(name, eff, "generic"), callback_data=f"service_{name}")])
         service_buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
         query.edit_message_text("اختر الخدمة المطلوبة:", reply_markup=InlineKeyboardMarkup(service_buttons))
         return
@@ -1526,7 +1556,7 @@ def button_handler(update: Update, context: CallbackContext):
         service_buttons = []
         for name, price in views_services.items():
             eff = get_display_price(user_id, name, price, "generic")
-            service_buttons.append([InlineKeyboardButton(f"{name} - {eff}$" + (f" ×{get_effective_quantity(name)}" if get_effective_quantity(name) else ""), callback_data=f"service_{name}")])
+            service_buttons.append([InlineKeyboardButton(format_service_label(name, eff, "generic"), callback_data=f"service_{name}")])
         service_buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
         query.edit_message_text("اختر الخدمة المطلوبة:", reply_markup=InlineKeyboardMarkup(service_buttons))
         return
@@ -1536,7 +1566,7 @@ def button_handler(update: Update, context: CallbackContext):
         service_buttons = []
         for name, price in live_views_services.items():
             eff = get_display_price(user_id, name, price, "generic")
-            service_buttons.append([InlineKeyboardButton(f"{name} - {eff}$" + (f" ×{get_effective_quantity(name)}" if get_effective_quantity(name) else ""), callback_data=f"service_{name}")])
+            service_buttons.append([InlineKeyboardButton(format_service_label(name, eff, "generic"), callback_data=f"service_{name}")])
         service_buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
         query.edit_message_text("اختر الخدمة المطلوبة:", reply_markup=InlineKeyboardMarkup(service_buttons))
         return
