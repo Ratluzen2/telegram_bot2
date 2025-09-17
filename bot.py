@@ -1768,8 +1768,9 @@ def button_handler(update: Update, context: CallbackContext):
             query.edit_message_text("رصيدك ليس كافياً.", reply_markup=InlineKeyboardMarkup(buttons))
             return
         context.user_data["selected_pubg_service"] = name
+        context.user_data["selected_pubg_label"] = display_label_for_service(name, price)
         context.user_data["pubg_service_price"] = price
-        query.edit_message_text("ارسل الايدي الخاص بك:")
+        query.edit_message_text(f"الخدمة المختارة: {display_label_for_service(name, price)}\n\nارسل الايدي الخاص بك:")
         return
 
     # اختيار خدمة ايتونز
