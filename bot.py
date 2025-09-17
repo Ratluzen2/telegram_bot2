@@ -721,13 +721,7 @@ def get_effective_price(user_id: int, service_name: str, base_price: float, kind
 # دوال مساعدة: السعر الفعلي والعرض مع الخصم + تعيين كمية API
 
 def format_service_label(service_name: str, eff_price: float, kind: str = "generic") -> str:
-    """يبني نص الزرّ حسب النوع بحيث تُعرض الكمية داخل الاسم وليس بجانب السعر.
-    الأمثلة:
-    - mobile:  'شراء رصيد (Q) دولار اثير'
-    - pubg:    'ببجي (Q) شدة'
-    - itunes:  'شراء رصيد (Q) ايتونز'
-    - telegram/ludo/generic: نحتفظ بالاسم كما هو (1k/2k...) ولا نضيف ×Q.
-    """
+    import re
     q = 0
     try:
         ov = db_get_service_override(service_name)
@@ -741,43 +735,34 @@ def format_service_label(service_name: str, eff_price: float, kind: str = "gener
             q = int(base.get('quantity_multiplier') or 0)
         except Exception:
             q = 0
-
-    # لا نغيّر أسماء خدمات السوشيال (1k/2k...)
-    # الأقسام العادية: نعرض الكمية داخل الاسم بصيغة k(Q) عندما يكون الاسم يحتوي رقم+k
-    if kind in ("generic",):
+    def with_price(name: str) -> str:
+        return f"{name} - {eff_price}$"
+    if kind in ("generic", "telegram", "score", "live"):
         if q:
-            try:
-                # أمثلة: 'مشاهدات تيكتوك 1k' -> 'مشاهدات تيكتوك k(Q)'
-                name2 = re.sub(r"(\d+)\s*k\b", f"k({q})", service_name)
-                return f"{name2} - {eff_price}$"
-            except Exception:
-                pass
-        return f"{service_name} - {eff_price}$"
-
-    # لا نغيّر أسماء التلغرام/لودو
-    if kind in ("telegram", "ludo"):
-        return f"{service_name} - {eff_price}$"
-
-    import re
+            name2 = re.sub(r"(\d+)\s*k\b", f"({q})k", service_name)
+            return with_price(name2)
+        return with_price(service_name)
     if kind == "mobile":
-        # حاول استبدال أي رقم قبل كلمة 'دولار' بـ (Q)
         if q:
-            return re.sub(r"(شراء\s+رصيد\s+)(\d+)(?=\s*دولار)", rf"\\1({q})", service_name) + f" - {eff_price}$"
-        return f"{service_name} - {eff_price}$"
-
+            name2 = re.sub(r"(شراء\s+رصيد\s+)(\d+)(?=\s*دولار)", rf"\1({q})", service_name)
+            return with_price(name2)
+        return with_price(service_name)
     if kind == "itunes":
         if q:
-            # أمثلة: 'شراء رصيد 5 ايتونز' -> 'شراء رصيد (Q) ايتونز'
-            return re.sub(r"(شراء\s+رصيد\s+)(\d+)(?=\s*ايتونز)", rf"\\1({q})", service_name) + f" - {eff_price}$"
-        return f"{service_name} - {eff_price}$"
-
+            name2 = re.sub(r"(شراء\s+رصيد\s+)(\d+)(?=\s*ايتونز)", rf"\1({q})", service_name)
+            return with_price(name2)
+        return with_price(service_name)
     if kind == "pubg":
         if q:
-            # 'ببجي 60 شدة' -> 'ببجي (Q) شدة'
-            return re.sub(r"(ببجي\s+)(\d+)(?=\s*شدة)", rf"\\1({q})", service_name) + f" - {eff_price}$"
-        return f"{service_name} - {eff_price}$"
-
-    return f"{service_name} - {eff_price}$"
+            name2 = re.sub(r"(ببجي)\s*\d+\s*(شدة)", rf"\1 ({q})\2", service_name)
+            return with_price(name2)
+        return with_price(service_name)
+    if kind == "ludo":
+        if q:
+            name2 = re.sub(r"(لودو)\s*\d+\s*(الماسة)", rf"\1 ({q}) \2", service_name)
+            return with_price(name2)
+        return with_price(service_name)
+    return with_price(service_name)
 
 # =========================
 def get_base_price(service_name: str, default_price: float) -> float:
@@ -947,9 +932,9 @@ def _ap_show_service_actions(update: Update, context: CallbackContext, query, id
     btns = [[InlineKeyboardButton("💲 تعديل السعر", callback_data=f"ap_setprice_{idx}")]]
     if has_qty:
         btns.append([InlineKeyboardButton("📦 تعديل الكمية", callback_data=f"ap_setqty_{idx}")])
-    btns.append([InlineKeyboardButton("❌ حذف تعديل السعر", callback_data=f"ap_delprice_{idx}")])
+    btns.append([InlineKeyboardButton("🗑️ إزالة تعديل السعر", callback_data=f"ap_delprice_{idx}")])
     if has_qty:
-        btns.append([InlineKeyboardButton("↩️ إعادة الكمية للافتراضي", callback_data=f"ap_delqty_{idx}")])
+        btns.append([InlineKeyboardButton("🗑️ إزالة تعديل الكمية", callback_data=f"ap_delqty_{idx}")])
     btns.append([InlineKeyboardButton("رجوع", callback_data=f"ap_page_{context.user_data.get('ap_cat','smm')}_{context.user_data.get('ap_page',0)}")])
     query.edit_message_text(f"الخدمة:\n• {name}\nاختر الإجراء:", reply_markup=InlineKeyboardMarkup(btns))
 
