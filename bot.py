@@ -1794,7 +1794,9 @@ def button_handler(update: Update, context: CallbackContext):
             return
         context.user_data["selected_itunes_service"] = service_name
         context.user_data["itunes_service_price"] = price
-        query.edit_message_text(f"تم اختيار الخدمة: {service_name}\n\nارسل رقم 1 لتأكيد طلبك")
+        query.edit_message_text(f"تم اختيار الخدمة: {display_label_for_service(service_name, price)}
+
+ارسل رقم 1 لتأكيد طلبك")
         context.user_data["waiting_for_itunes_confirm"] = True
         return
 
@@ -3039,7 +3041,9 @@ def mobile_button_handler(update: Update, context: CallbackContext):
         context.user_data["selected_mobile_service"] = service_name
         context.user_data["mobile_service_price"] = price
         try:
-            query.edit_message_text(f"تم اختيار الخدمة: {service_name}\n\nارسل رقم 1 لتأكيد طلبك")
+            query.edit_message_text(f"تم اختيار الخدمة: {display_label_for_service(service_name, price)}
+
+ارسل رقم 1 لتأكيد طلبك")
         except Exception:
             context.bot.send_message(chat_id=update.effective_chat.id, text=f"تم اختيار الخدمة: {service_name}\n\nارسل رقم 1 لتأكيد طلبك")
         context.user_data["waiting_for_mobile_confirm"] = True
