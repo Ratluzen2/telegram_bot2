@@ -895,6 +895,11 @@ def _ap_list_services(update: Update, context: CallbackContext, query, cat: str,
     context.user_data["ap_map"] = items
     context.user_data["ap_cat"] = cat
     context.user_data["ap_page"] = page
+    try:
+        _adm_id = (update.effective_user.id if update and update.effective_user else query.from_user.id)
+    except Exception:
+        _adm_id = query.from_user.id
+    context.bot_data.setdefault('ap_maps', {})[_adm_id] = items
 
     lines = [f"القسم: {cat} — الصفحة {page+1}/{(total-1)//page_size+1 if total else 1}", ""]
     for i, name in enumerate(view, start=start):
@@ -937,7 +942,11 @@ def _ap_list_services(update: Update, context: CallbackContext, query, cat: str,
         context.bot.send_message(chat_id=update.effective_chat.id, text="\n".join(lines), reply_markup=InlineKeyboardMarkup(buttons))
 
 def _ap_show_service_actions(update: Update, context: CallbackContext, query, idx: int):
-    items = context.user_data.get("ap_map") or []
+    try:
+        _adm_id = (update.effective_user.id if update and update.effective_user else query.from_user.id)
+    except Exception:
+        _adm_id = query.from_user.id
+    items = (context.bot_data.get('ap_maps', {}) or {}).get(_adm_id) or context.user_data.get('ap_map') or []
     if idx < 0 or idx >= len(items):
         query.answer("خيار غير صالح.", show_alert=True); return
     name = items[idx]
@@ -946,9 +955,9 @@ def _ap_show_service_actions(update: Update, context: CallbackContext, query, id
     btns = [[InlineKeyboardButton("💲 تعديل السعر", callback_data=f"ap_setprice_{idx}")]]
     if has_qty:
         btns.append([InlineKeyboardButton("📦 تعديل الكمية", callback_data=f"ap_setqty_{idx}")])
-    btns.append([InlineKeyboardButton("❌ حذف تعديل السعر", callback_data=f"ap_delprice_{idx}")])
+    btns.append([InlineKeyboardButton("🗑️ إزالة تعديل السعر", callback_data=f"ap_delprice_{idx}")])
     if has_qty:
-        btns.append([InlineKeyboardButton("↩️ إعادة الكمية للافتراضي", callback_data=f"ap_delqty_{idx}")])
+        btns.append([InlineKeyboardButton("🗑️ إزالة تعديل الكمية", callback_data=f"ap_delqty_{idx}")])
     btns.append([InlineKeyboardButton("رجوع", callback_data=f"ap_page_{context.user_data.get('ap_cat','smm')}_{context.user_data.get('ap_page',0)}")])
     query.edit_message_text(f"الخدمة:\n• {name}\nاختر الإجراء:", reply_markup=InlineKeyboardMarkup(btns))
 
@@ -1374,6 +1383,10 @@ def get_mod_discount_help_text() -> str:
 
 def button_handler(update: Update, context: CallbackContext):
     query = update.callback_query
+    try:
+        query.answer()
+    except Exception:
+        pass
     user_id = query.from_user.id
     data = query.data
 
