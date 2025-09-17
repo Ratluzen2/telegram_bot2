@@ -719,6 +719,24 @@ def get_effective_price(user_id: int, service_name: str, base_price: float, kind
 
 # =========================
 # دوال مساعدة: السعر الفعلي والعرض مع الخصم + تعيين كمية API
+
+def get_effective_quantity(service_name: str) -> int:
+    """يرجع quantity_multiplier الفعلي (override إن وُجد، وإلا الافتراضي).
+    يعاد 0 إذا لا توجد كمية معرّفة (كي لا نعرض ×0).
+    """
+    try:
+        ov = db_get_service_override(service_name)
+        if ov and ov.get('quantity_multiplier'):
+            return int(ov['quantity_multiplier'])
+    except Exception:
+        pass
+    try:
+        base = service_api_mapping.get(service_name) or {}
+        q = int(base.get('quantity_multiplier') or 0)
+        return q if q > 0 else 0
+    except Exception:
+        return 0
+
 # =========================
 def get_base_price(service_name: str, default_price: float) -> float:
     """يرجع سعر الأساس مع مراعاة أي override في قاعدة البيانات."""
@@ -836,11 +854,6 @@ def _ap_list_services(update: Update, context: CallbackContext, query, cat: str,
     context.user_data["ap_map"] = items
     context.user_data["ap_cat"] = cat
     context.user_data["ap_page"] = page
-    try:
-        _adm_id = (update.effective_user.id if update and update.effective_user else query.from_user.id)
-    except Exception:
-        _adm_id = query.from_user.id
-    context.bot_data.setdefault('ap_maps', {})[_adm_id] = items
 
     lines = [f"القسم: {cat} — الصفحة {page+1}/{(total-1)//page_size+1 if total else 1}", ""]
     for i, name in enumerate(view, start=start):
@@ -883,11 +896,7 @@ def _ap_list_services(update: Update, context: CallbackContext, query, cat: str,
         context.bot.send_message(chat_id=update.effective_chat.id, text="\n".join(lines), reply_markup=InlineKeyboardMarkup(buttons))
 
 def _ap_show_service_actions(update: Update, context: CallbackContext, query, idx: int):
-    try:
-        _adm_id = (update.effective_user.id if update and update.effective_user else query.from_user.id)
-    except Exception:
-        _adm_id = query.from_user.id
-    items = (context.bot_data.get('ap_maps', {}) or {}).get(_adm_id) or context.user_data.get('ap_map') or []
+    items = context.user_data.get("ap_map") or []
     if idx < 0 or idx >= len(items):
         query.answer("خيار غير صالح.", show_alert=True); return
     name = items[idx]
@@ -1324,10 +1333,6 @@ def get_mod_discount_help_text() -> str:
 
 def button_handler(update: Update, context: CallbackContext):
     query = update.callback_query
-    try:
-        query.answer()
-    except Exception:
-        pass
     user_id = query.from_user.id
     data = query.data
 
@@ -1501,7 +1506,7 @@ def button_handler(update: Update, context: CallbackContext):
         service_buttons = []
         for name, price in followers_services.items():
             eff = get_display_price(user_id, name, price, "generic")
-            service_buttons.append([InlineKeyboardButton(f"{name} - {eff}$", callback_data=f"service_{name}")])
+            service_buttons.append([InlineKeyboardButton(f"{name} - {eff}$" + (f" ×{get_effective_quantity(name)}" if get_effective_quantity(name) else ""), callback_data=f"service_{name}")])
         service_buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
         query.edit_message_text("اختر الخدمة المطلوبة:", reply_markup=InlineKeyboardMarkup(service_buttons))
         return
@@ -1511,7 +1516,7 @@ def button_handler(update: Update, context: CallbackContext):
         service_buttons = []
         for name, price in likes_services.items():
             eff = get_display_price(user_id, name, price, "generic")
-            service_buttons.append([InlineKeyboardButton(f"{name} - {eff}$", callback_data=f"service_{name}")])
+            service_buttons.append([InlineKeyboardButton(f"{name} - {eff}$" + (f" ×{get_effective_quantity(name)}" if get_effective_quantity(name) else ""), callback_data=f"service_{name}")])
         service_buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
         query.edit_message_text("اختر الخدمة المطلوبة:", reply_markup=InlineKeyboardMarkup(service_buttons))
         return
@@ -1521,7 +1526,7 @@ def button_handler(update: Update, context: CallbackContext):
         service_buttons = []
         for name, price in views_services.items():
             eff = get_display_price(user_id, name, price, "generic")
-            service_buttons.append([InlineKeyboardButton(f"{name} - {eff}$", callback_data=f"service_{name}")])
+            service_buttons.append([InlineKeyboardButton(f"{name} - {eff}$" + (f" ×{get_effective_quantity(name)}" if get_effective_quantity(name) else ""), callback_data=f"service_{name}")])
         service_buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
         query.edit_message_text("اختر الخدمة المطلوبة:", reply_markup=InlineKeyboardMarkup(service_buttons))
         return
@@ -1531,7 +1536,7 @@ def button_handler(update: Update, context: CallbackContext):
         service_buttons = []
         for name, price in live_views_services.items():
             eff = get_display_price(user_id, name, price, "generic")
-            service_buttons.append([InlineKeyboardButton(f"{name} - {eff}$", callback_data=f"service_{name}")])
+            service_buttons.append([InlineKeyboardButton(f"{name} - {eff}$" + (f" ×{get_effective_quantity(name)}" if get_effective_quantity(name) else ""), callback_data=f"service_{name}")])
         service_buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
         query.edit_message_text("اختر الخدمة المطلوبة:", reply_markup=InlineKeyboardMarkup(service_buttons))
         return
