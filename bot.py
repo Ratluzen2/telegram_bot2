@@ -59,6 +59,94 @@ if not TOKEN or ":" not in TOKEN:
 # =========================
 # تعريف القواميس الخاصة بالخدمات
 # =========================
+
+# ======== Helpers for labels: remove 'k', show qty in (), apply DB overrides ========
+import re as _re
+
+def _strip_k_digits(s: str) -> str:
+    return s.replace("k", "").replace("K", "")
+
+def _extract_qty_from_name(name: str) -> int:
+    m = _re.search(r'(\d+)\s*k\b', name, flags=_re.IGNORECASE) or _re.search(r'(\d+)k\b', name, flags=_re.IGNORECASE) or _re.search(r'(\d+)k', name, flags=_re.IGNORECASE)
+    if m:
+        try: return int(m.group(1)) * 1000
+        except: pass
+    m = _re.search(r'(\d+)\s*شدة', name)
+    if m:
+        try: return int(m.group(1))
+        except: pass
+    m = _re.search(r'شراء\s*رصيد\s+(\d+)\s*ايتونز', name)
+    if m:
+        try: return int(m.group(1))
+        except: pass
+    m = _re.search(r'شراء\s*رصيد\s+(\d+)\s*دولار\s*(?:اثير|اسيا|كورك)', name)
+    if m:
+        try: return int(m.group(1))
+        except: pass
+    m = _re.search(r'لودو\s+(\d+)\s*(?:الماسة|ذهب)', name)
+    if m:
+        try: return int(m.group(1))
+        except: pass
+    m = _re.findall(r'(\d+)', name)
+    if m:
+        try: return int(m[-1])
+        except: pass
+    return None
+
+def get_effective_quantity(service_name: str):
+    """Quantity shown to users: DB override -> mapping default -> parsed from name."""
+    try:
+        ov = db_get_service_override(service_name) or {}
+        q = ov.get("quantity_multiplier")
+        if q:
+            return int(q)
+        base_map = service_api_mapping.get(service_name) or {}
+        q = base_map.get("quantity_multiplier")
+        if q:
+            return int(q)
+    except Exception:
+        pass
+    return _extract_qty_from_name(service_name)
+
+def _remove_qty_fragment(name: str) -> str:
+    patterns = [
+        r'\s*\d+\s*k\b', r'\s*\d+k\b',
+        r'\s*\d+\s*شدة',
+        r'\s*\d+\s*ايتونز',
+        r'\s*\d+\s*دولار\s*(?:اثير|اسيا|كورك)',
+        r'\s*\d+\s*(?:الماسة|ذهب)',
+        r'بثك\s*\d+\s*k\b',
+    ]
+    base = name
+    for pat in patterns:
+        base = _re.sub(pat + r'$', '', base, flags=_re.IGNORECASE).strip()
+    return _strip_k_digits(base).strip()
+
+def display_label_for_service(service_name: str, eff_price: float) -> str:
+    """
+    PUBG: "{title} ({qty}) شدة - {price}$"
+    Telegram/social: "{title} {price}$ - ({qty})"
+    iTunes/mobile/Ludo formatted similarly and ALL without 'k'.
+    If qty is None -> show "()".
+    """
+    qty = get_effective_quantity(service_name)
+    qty_txt = f"{qty}" if (isinstance(qty, int) and qty > 0) else ""
+    title = _remove_qty_fragment(service_name)
+    low = service_name
+    if "شدة" in low:
+        return f"{_strip_k_digits(title)} ({qty_txt}) شدة - {eff_price}$"
+    if "ايتونز" in low:
+        return f"شراء رصيد ({qty_txt}) ايتونز - {eff_price}$"
+    if "دولار اثير" in low:
+        return f"شراء رصيد ({qty_txt}) دولار اثير - {eff_price}$"
+    if ("دولار اسيا" in low) or ("دولار اسي" in low):
+        return f"شراء رصيد ({qty_txt}) دولار اسيا - {eff_price}$"
+    if "دولار كورك" in low:
+        return f"شراء رصيد ({qty_txt}) دولار كورك - {eff_price}$"
+    if "لودو" in low and ("الماسة" in low or "ذهب" in low):
+        tail = "الماسة" if "الماسة" in low else "ذهب" if "ذهب" in low else ""
+        return f"لودو ({qty_txt}) {tail} - {eff_price}$"
+    return f"{_strip_k_digits(title)} {eff_price}$ - ({qty_txt})"
 service_api_mapping = {
     "متابعين تيكتوك 1k": {"service_id": 13912, "quantity_multiplier": 1000},
     "متابعين تيكتوك 2k": {"service_id": 13912, "quantity_multiplier": 2000},
@@ -920,111 +1008,6 @@ def mobile_recharge_services_keyboard(user_id: int):
     buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
     return InlineKeyboardMarkup(buttons)
 
-
-# ======== تنسيق العرض: إزالة حرف k + وضع الكمية بين قوسين + دعم إظهار الأسعار المحدثة ========
-import re as _re
-
-def _strip_k_digits(s: str) -> str:
-    return s.replace("k", "").replace("K", "")
-
-def _extract_qty_from_name(name: str) -> int:
-    # 1) أرقام مع k
-    m = _re.search(r'(\d+)\s*k\b', name, flags=_re.IGNORECASE) or _re.search(r'(\d+)k\b', name, flags=_re.IGNORECASE) or _re.search(r'(\d+)k', name, flags=_re.IGNORECASE)
-    if m:
-        try: return int(m.group(1)) * 1000
-        except: pass
-    # 2) PUBG "60 شدة"
-    m = _re.search(r'(\d+)\s*شدة', name)
-    if m:
-        try: return int(m.group(1))
-        except: pass
-    # 3) iTunes "شراء رصيد 5 ايتونز"
-    m = _re.search(r'شراء\s*رصيد\s+(\d+)\s*ايتونز', name)
-    if m:
-        try: return int(m.group(1))
-        except: pass
-    # 4) Mobile "شراء رصيد 2 دولار ..."
-    m = _re.search(r'شراء\s*رصيد\s+(\d+)\s*دولار\s*(?:اثير|اسيا|كورك)', name)
-    if m:
-        try: return int(m.group(1))
-        except: pass
-    # 5) Ludo "لودو 830 الماسة/ذهب"
-    m = _re.search(r'لودو\s+(\d+)\s*(?:الماسة|ذهب)', name)
-    if m:
-        try: return int(m.group(1))
-        except: pass
-    # 6) كحل أخير: آخر رقم في الاسم
-    m = _re.findall(r'(\d+)', name)
-    if m:
-        try: return int(m[-1])
-        except: pass
-    return None
-
-def _remove_qty_fragment(name: str) -> str:
-    patterns = [
-        r'\s*\d+\s*k\b', r'\s*\d+k\b',
-        r'\s*\d+\s*شدة',
-        r'\s*\d+\s*ايتونز',
-        r'\s*\d+\s*دولار\s*(?:اثير|اسيا|كورك)',
-        r'\s*\d+\s*(?:الماسة|ذهب)',
-        r'بثك\s*\d+\s*k\b',
-    ]
-    base = name
-    for pat in patterns:
-        base = _re.sub(pat + r'$', '', base, flags=_re.IGNORECASE).strip()
-    return _strip_k_digits(base).strip()
-
-def get_effective_quantity(service_name: str):
-    """
-    يرجع الكمية الفعلية الظاهرة للمستخدم:
-    1) override من جدول service_api_overrides (إن وجد).
-    2) الافتراضي من service_api_mapping (إن وجد).
-    3) استخراج تقديري من الاسم للخدمات غير الداعمة للـ API.
-    """
-    try:
-        ov = db_get_service_override(service_name) or {}
-        q = ov.get("quantity_multiplier")
-        if q:
-            return int(q)
-        base_map = service_api_mapping.get(service_name) or {}
-        q = base_map.get("quantity_multiplier")
-        if q:
-            return int(q)
-    except Exception:
-        pass
-    return _extract_qty_from_name(service_name)
-
-def display_label_for_service(service_name: str, eff_price: float) -> str:
-    """
-    تنسيق موحّد لكل الأقسام:
-      - حذف k نهائياً
-      - وضع الكمية داخل قوسين (إن لم توجد تبقى "()")
-      - أقسام خاصة:
-          • ببجي: "{العنوان} ({الكمية}) شدة - {السعر}$"
-          • ايتونز: "شراء رصيد ({الكمية}) ايتونز - {السعر}$"
-          • رصيد الهاتف: "شراء رصيد ({الكمية}) دولار {الشبكة} - {السعر}$"
-          • لودو: "لودو ({الكمية}) الماسة/ذهب - {السعر}$"
-          • تليجرام/سوشيال: "{العنوان} {السعر}$ - ({الكمية})"
-    """
-    qty = get_effective_quantity(service_name)
-    qty_txt = f"{qty}" if (isinstance(qty, int) and qty > 0) else ""
-    title = _remove_qty_fragment(service_name)
-    low = service_name
-    if "شدة" in low:
-        return f"{_strip_k_digits(title)} ({qty_txt}) شدة - {eff_price}$"
-    if "ايتونز" in low:
-        return f"شراء رصيد ({qty_txt}) ايتونز - {eff_price}$"
-    if "دولار اثير" in low:
-        return f"شراء رصيد ({qty_txt}) دولار اثير - {eff_price}$"
-    if ("دولار اسيا" in low) or ("دولار اسي" in low):
-        return f"شراء رصيد ({qty_txt}) دولار اسيا - {eff_price}$"
-    if "دولار كورك" in low:
-        return f"شراء رصيد ({qty_txt}) دولار كورك - {eff_price}$"
-    if "لودو" in low and ("الماسة" in low or "ذهب" in low):
-        tail = "الماسة" if "الماسة" in low else "ذهب" if "ذهب" in low else ""
-        return f"لودو ({qty_txt}) {tail} - {eff_price}$"
-    # تليجرام/سوشيال (متابعين/لايكات/مشاهدات/بث/أعضاء تلي/رفع سكور ...)
-    return f"{_strip_k_digits(title)} {eff_price}$ - ({qty_txt})"
 def services_menu_keyboard():
     buttons = [
         [InlineKeyboardButton("تعديل الأسعار والكميات", callback_data="admin_edit_prices")],
@@ -1048,7 +1031,7 @@ def tiktok_score_keyboard(user_id: int, context: CallbackContext):
     service_buttons = []
     for idx, (service_name, price) in enumerate(score_services):
         eff = get_display_price(user_id, service_name, price, "generic")
-        service_buttons.append([InlineKeyboardButton(display_label_for_service(service_name, eff), callback_data=f"score_service_{idx}")])
+        service_buttons.append([InlineKeyboardButton(f"{service_name} - {eff}$", callback_data=f"score_service_{idx}")])
     service_buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
     return InlineKeyboardMarkup(service_buttons)
 
@@ -1063,8 +1046,9 @@ def itunes_services_keyboard(user_id: int):
 def telegram_services_keyboard(user_id: int):
     buttons = []
     for service_name, price in telegram_services.items():
-        eff = get_display_price(user_id, service_name, price, "telegram")
-        buttons.append([InlineKeyboardButton(f"{service_name} - {eff}$", callback_data=f"telegram_service_{service_name}")])
+        base = get_base_price(service_name, price)
+        eff = get_effective_price(user_id, service_name, base, "telegram")
+        buttons.append([InlineKeyboardButton(display_label_for_service(service_name, eff), callback_data=f"telegram_service_{service_name}")])
     buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
     return InlineKeyboardMarkup(buttons)
 
@@ -1593,7 +1577,7 @@ def button_handler(update: Update, context: CallbackContext):
         service_buttons = []
         for name, price in followers_services.items():
             eff = get_display_price(user_id, name, price, "generic")
-            service_buttons.append([InlineKeyboardButton(display_label_for_service(name, eff), callback_data=f"service_{name}")])
+            service_buttons.append([InlineKeyboardButton(f"{name} - {eff}$", callback_data=f"service_{name}")])
         service_buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
         query.edit_message_text("اختر الخدمة المطلوبة:", reply_markup=InlineKeyboardMarkup(service_buttons))
         return
@@ -1603,7 +1587,7 @@ def button_handler(update: Update, context: CallbackContext):
         service_buttons = []
         for name, price in likes_services.items():
             eff = get_display_price(user_id, name, price, "generic")
-            service_buttons.append([InlineKeyboardButton(display_label_for_service(name, eff), callback_data=f"service_{name}")])
+            service_buttons.append([InlineKeyboardButton(f"{name} - {eff}$", callback_data=f"service_{name}")])
         service_buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
         query.edit_message_text("اختر الخدمة المطلوبة:", reply_markup=InlineKeyboardMarkup(service_buttons))
         return
@@ -1613,7 +1597,7 @@ def button_handler(update: Update, context: CallbackContext):
         service_buttons = []
         for name, price in views_services.items():
             eff = get_display_price(user_id, name, price, "generic")
-            service_buttons.append([InlineKeyboardButton(display_label_for_service(name, eff), callback_data=f"service_{name}")])
+            service_buttons.append([InlineKeyboardButton(f"{name} - {eff}$", callback_data=f"service_{name}")])
         service_buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
         query.edit_message_text("اختر الخدمة المطلوبة:", reply_markup=InlineKeyboardMarkup(service_buttons))
         return
@@ -1623,7 +1607,7 @@ def button_handler(update: Update, context: CallbackContext):
         service_buttons = []
         for name, price in live_views_services.items():
             eff = get_display_price(user_id, name, price, "generic")
-            service_buttons.append([InlineKeyboardButton(display_label_for_service(name, eff), callback_data=f"service_{name}")])
+            service_buttons.append([InlineKeyboardButton(f"{name} - {eff}$", callback_data=f"service_{name}")])
         service_buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
         query.edit_message_text("اختر الخدمة المطلوبة:", reply_markup=InlineKeyboardMarkup(service_buttons))
         return
@@ -1684,8 +1668,9 @@ def button_handler(update: Update, context: CallbackContext):
     if data == "show_pubg":
         service_buttons = []
         for name, base_price in pubg_services.items():
+            base_price = get_base_price(name, base_price)
             eff = get_effective_price(user_id, name, base_price, "pubg")
-            service_buttons.append([InlineKeyboardButton(f"{name} - {eff}$", callback_data=f"pubg_service_{name}")])
+            service_buttons.append([InlineKeyboardButton(display_label_for_service(name, eff), callback_data=f"pubg_service_{name}")])
         service_buttons.append([InlineKeyboardButton("رجوع", callback_data="show_services")])
         query.edit_message_text("اختر خدمة شحن شدات ببجي:", reply_markup=InlineKeyboardMarkup(service_buttons))
         return
@@ -1791,7 +1776,6 @@ def button_handler(update: Update, context: CallbackContext):
     if data.startswith("itunes_service_"):
         service_name = data[len("itunes_service_"):]
         base_price = itunes_services.get(service_name, 0)
-        base_price = get_base_price(service_name, base_price)
         price = get_effective_price(user_id, service_name, base_price, "itunes")
         current_balance = users_balance.get(user_id, 0.0)
         if current_balance < price:
@@ -1816,8 +1800,7 @@ def button_handler(update: Update, context: CallbackContext):
     # اختيار خدمة تلغرام
     if data.startswith("telegram_service_"):
         service_name = data[len("telegram_service_"):]
-        base_price = telegram_services.get(service_name, 0)
-        base_price = get_base_price(service_name, base_price)
+        base_price = get_base_price(service_name, telegram_services.get(service_name, 0))
         price = get_effective_price(user_id, service_name, base_price, "telegram")
         current_balance = users_balance.get(user_id, 0.0)
         if current_balance < price:
