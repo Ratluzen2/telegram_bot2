@@ -47,11 +47,11 @@ logger = logging.getLogger("TG_BOT")
 # =========================
 # الإعدادات (Environment)
 # =========================
-ADMIN_ID = int(os.getenv("ADMIN_ID", "7655504656"))
-TOKEN = os.getenv("TOKEN", "8138615524:AAFr6m5Z4_gY0k7pdg7teD9nM8ReDC-KQKU")
-API_KEY = os.getenv("API_KEY", "25a9ceb07be0d8b2ba88e70dcbe92e06")
-API_URL = os.getenv("API_URL", "https://kd1s.com/api/v2")
-SUPPORT_CONTACT = os.getenv("SUPPORT_CONTACT", "@z396r")  # لدعم طرق الشحن الإضافية
+ADMIN_ID = int(os.getenv("ADMIN_ID", ""))
+TOKEN = os.getenv("TOKEN", "")
+API_KEY = os.getenv("API_KEY", "")
+API_URL = os.getenv("API_URL", "")
+SUPPORT_CONTACT = os.getenv("SUPPORT_CONTACT", "")  # لدعم طرق الشحن الإضافية
 
 if not TOKEN or ":" not in TOKEN:
     logger.warning("⚠️ TOKEN غير مضبوط أو غير صالح. عدّل متغير البيئة TOKEN.")
