@@ -47,11 +47,11 @@ logger = logging.getLogger("TG_BOT")
 # =========================
 # الإعدادات (Environment)
 # =========================
-ADMIN_ID = int(os.getenv("ADMIN_ID", ""))
-TOKEN = os.getenv("TOKEN", "")
-API_KEY = os.getenv("API_KEY", "")
-API_URL = os.getenv("API_URL", "")
-SUPPORT_CONTACT = os.getenv("SUPPORT_CONTACT", "")  # لدعم طرق الشحن الإضافية
+ADMIN_ID = int(os.getenv("ADMIN_ID", "7655504656"))
+TOKEN = os.getenv("TOKEN", "8138615524:AAFr6m5Z4_gY0k7pdg7teD9nM8ReDC-KQKU")
+API_KEY = os.getenv("API_KEY", "25a9ceb07be0d8b2ba88e70dcbe92e06")
+API_URL = os.getenv("API_URL", "https://kd1s.com/api/v2")
+SUPPORT_CONTACT = os.getenv("SUPPORT_CONTACT", "@z396r")  # لدعم طرق الشحن الإضافية
 
 if not TOKEN or ":" not in TOKEN:
     logger.warning("⚠️ TOKEN غير مضبوط أو غير صالح. عدّل متغير البيئة TOKEN.")
@@ -318,6 +318,8 @@ _exec("""CREATE TABLE IF NOT EXISTS blocked_users (
     until TIMESTAMPTZ,
     reason TEXT
 )""")
+
+_exec("CREATE INDEX IF NOT EXISTS idx_blocked_users_until ON blocked_users(until)")
 
 # سجل محاولات كروت آسياسيل
 _exec("""CREATE TABLE IF NOT EXISTS card_submissions (
@@ -661,10 +663,11 @@ def db_mark_order_completed_api(order_id:int, api_order:str, api_service:str):
 def db_mark_order_completed_manual(order_id:int):
     _exec("""UPDATE orders SET status='completed', completed_at=NOW() WHERE id=%s""", (order_id,))
 
+
+
 def db_refund_order(order_id:int, user_id:int, amount:float):
-    # استرجاع الرصيد وتعديل الطلب
-    _exec("UPDATE users SET balance = COALESCE(balance,0) + %s WHERE user_id=%s", (amount, user_id))
-    reduce_user_spent(user_id, amount)
+    # استرجاع الرصيد وتعديل الطلب في استعلامات قليلة لتحسين الأداء
+    _exec("UPDATE users SET balance = COALESCE(balance,0) + %s, total_spent = GREATEST(COALESCE(total_spent,0) - %s, 0) WHERE user_id=%s", (amount, amount, user_id))
     _exec("UPDATE orders SET status='refunded', refunded=TRUE WHERE id=%s", (order_id,))
 
 def db_delete_order(order_id:int):
@@ -682,26 +685,6 @@ def db_count_user_orders(user_id:int) -> int:
 # =========================
 # خصومات المشرفين
 # =========================
-def get_effective_price(user_id: int, service_name: str, base_price: float, kind: str = "generic") -> float:
-    try:
-        if not is_moderator(user_id):
-            return base_price
-        if kind in ("itunes", "pubg") or ("ايتونز" in service_name or "ببجي" in service_name):
-            return round(float(base_price) * 0.90, 2)
-        in_80 = (
-            ("متابعين" in service_name) or
-            ("لايكات" in service_name) or
-            ("مشاهدات بث" in service_name) or
-            ("رفع سكور" in service_name) or
-            (kind == "telegram")
-        )
-        if in_80:
-            return round(float(base_price) * 0.80, 2)
-        return base_price
-    except Exception as e:
-        logger.error("get_effective_price error: %s", e)
-        return base_price
-
 
 # =========================
 # خصومات المشرفين (10% خصم ثابت على جميع الخدمات للمشرفين فقط)
@@ -1121,6 +1104,7 @@ def clear_all_waiting_flags(context: CallbackContext):
 # =========================
 # نظام الإعلان (يدعم وسائط)
 # =========================
+
 def broadcast_ad(update: Update, context: CallbackContext):
     announcement_prefix = "✨ إعلان من مالك البوت ✨\n\n"
     all_users = get_all_users()
@@ -1130,9 +1114,13 @@ def broadcast_ad(update: Update, context: CallbackContext):
             file_id = update.message.photo[-1].file_id
             caption = update.message.caption or ""
             new_caption = announcement_prefix + caption
+            call_count = 0
             for usr in all_users:
                 try:
                     context.bot.send_photo(chat_id=usr[0], photo=file_id, caption=new_caption)
+                    call_count += 1
+                    if call_count % 20 == 0:
+                        time.sleep(1)
                 except Exception as e:
                     logger.error("Error sending photo to %s: %s", usr[0], e)
             update.message.reply_text(admin_reply)
@@ -1140,26 +1128,39 @@ def broadcast_ad(update: Update, context: CallbackContext):
             file_id = update.message.video.file_id
             caption = update.message.caption or ""
             new_caption = announcement_prefix + caption
+            call_count = 0
             for usr in all_users:
                 try:
                     context.bot.send_video(chat_id=usr[0], video=file_id, caption=new_caption)
+                    call_count += 1
+                    if call_count % 20 == 0:
+                        time.sleep(1)
                 except Exception as e:
                     logger.error("Error sending video to %s: %s", usr[0], e)
             update.message.reply_text(admin_reply)
         elif update.message.voice:
             file_id = update.message.voice.file_id
+            call_count = 0
             for usr in all_users:
                 try:
                     context.bot.send_message(chat_id=usr[0], text=announcement_prefix)
+                    call_count += 1
                     context.bot.send_voice(chat_id=usr[0], voice=file_id)
+                    call_count += 1
+                    if call_count % 20 == 0:
+                        time.sleep(1)
                 except Exception as e:
                     logger.error("Error sending voice to %s: %s", usr[0], e)
             update.message.reply_text(admin_reply)
         elif update.message.text:
             text_to_send = announcement_prefix + update.message.text
+            call_count = 0
             for usr in all_users:
                 try:
                     context.bot.send_message(chat_id=usr[0], text=text_to_send)
+                    call_count += 1
+                    if call_count % 20 == 0:
+                        time.sleep(1)
                 except Exception as e:
                     logger.error("Error sending text to %s: %s", usr[0], e)
             update.message.reply_text(admin_reply)
@@ -1168,8 +1169,8 @@ def broadcast_ad(update: Update, context: CallbackContext):
     except Exception as e:
         logger.error("broadcast_ad error: %s", e)
         update.message.reply_text("تعذّر إرسال البث حالياً.")
-
 # =========================
+
 # دالة البداية (start)
 
 # ======= أدوات التجميع + بوابة المالك + يوزرنيم البوت =======
@@ -1345,7 +1346,6 @@ def start(update: Update, context: CallbackContext):
     full_name = update.effective_user.full_name
     username = update.effective_user.username or "NoUsername"
     add_user_to_db(user_id, full_name, username)
-    update_username_in_db(user_id, username)
     sync_balance_from_db(user_id)
 
     msg = update.message.reply_text("مرحباً بك في البوت!", reply_markup=main_menu_keyboard(user_id))
@@ -1375,6 +1375,11 @@ def api_check_balance(update: Update, context: CallbackContext):
 # تنفيذ الطلب عبر API عند الموافقة (DB)
 # =========================
 def approve_order_process_db(order_id: int, context: CallbackContext, query):
+    try:
+        query.answer()
+    except Exception:
+        pass
+
     row = _exec("""SELECT id, user_id, full_name, username, category, service, price, link
                    FROM orders WHERE id=%s AND status='pending'""", (order_id,), "one")
     if not row:
